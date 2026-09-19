@@ -1,0 +1,46 @@
+services:
+  rp-man:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rp-man
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATA_DIR=/app/data
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      # Optional default token
+      - DISCORD_BOT_TOKEN=
+      - JWT_SECRET=change-this-to-a-secure-random-secret
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    extra_hosts:
+      # Allows container on ZimaOS / Linux to connect to host's Ollama instance
+      - "host.docker.internal:host-gateway"
+    # Resource limits for low-power servers (e.g. ZimaOS, CasaOS, mini-PCs)
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  # Optional Ollama service (uncomment if you want Ollama managed inside the same compose)
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: rp-man-ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ./ollama_data:/root/.ollama
+  #   # For NVIDIA GPU passthrough on Linux/ZimaOS:
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: all
+  #   #           capabilities: [gpu]
