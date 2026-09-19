@@ -8,12 +8,15 @@
     "dev:client": "vite",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "build:client": "vite build",
-    "build": "vite build",
-    "start": "tsx src/server/index.ts"
+    "build:server": "esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
+    "build": "vite build && esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.js",
+    "start": "tsx src/server/index.ts",
+    "start:prod": "node dist/server.js"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.0",
     "@tailwindcss/vite": "^4.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "axios": "^1.8.4",
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^11.8.1",
@@ -22,6 +25,7 @@
     "cors": "^2.8.5",
     "discord.js": "^14.18.0",
     "dotenv": "^16.4.7",
+    "esbuild": "^0.25.0",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^1.16.0",
@@ -31,7 +35,8 @@
     "react-router-dom": "^7.3.0",
     "systeminformation": "^5.25.11",
     "tailwind-merge": "^3.0.2",
-    "tailwindcss": "^4.1.0"
+    "tailwindcss": "^4.1.0",
+    "tsx": "^4.19.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -47,7 +52,6 @@
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.2",
     "postcss": "^8.5.3",
-    "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "vite": "^6.2.1"
   }
