@@ -35,6 +35,8 @@ export const CharactersPage: React.FC = () => {
   const { success, error, info } = useToast();
   const navigate = useNavigate();
 
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
+
   const loadCharacters = async () => {
     try {
       const res = await api.getCharacters(searchQuery);
@@ -108,41 +110,45 @@ export const CharactersPage: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
             <Users className="w-6 h-6 text-brand-400" />
-            <span>Roleplay Character Manager</span>
+            <span>Roleplay Character Library</span>
           </h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Create, customize, and configure Discord triggers, system prompts, lore, and context limits.
+            {canEdit
+              ? 'Create, customize, and configure Discord triggers, system prompts, lore, and emotion avatars.'
+              : 'Browse characters and jump directly into solo or group roleplay chats.'}
           </p>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2.5">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileImport}
-            accept=".json,.png"
-            className="hidden"
-          />
+        {/* Action Buttons (Admin & Editor only) */}
+        {canEdit && (
+          <div className="flex items-center gap-2.5">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileImport}
+              accept=".json,.png"
+              className="hidden"
+            />
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold border border-zinc-700/80 transition-all active:scale-95 disabled:opacity-50"
-            title="Import Tavern V2 Character Card (JSON or PNG)"
-          >
-            <Upload className="w-4 h-4 text-brand-400" />
-            <span>{importing ? 'Importing...' : 'Import Card'}</span>
-          </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold border border-zinc-700/80 transition-all active:scale-95 disabled:opacity-50"
+              title="Import Tavern V2 Character Card (JSON or PNG)"
+            >
+              <Upload className="w-4 h-4 text-brand-400" />
+              <span>{importing ? 'Importing...' : 'Import Card'}</span>
+            </button>
 
-          <button
-            onClick={() => navigate('/characters/new')}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold shadow-glow-violet transition-all active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Create Character</span>
-          </button>
-        </div>
+            <button
+              onClick={() => navigate('/characters/new')}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold shadow-glow-violet transition-all active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Create Character</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Search & Tag Filter Bar */}
@@ -200,23 +206,26 @@ export const CharactersPage: React.FC = () => {
           <p className="text-xs text-zinc-400 mt-1 max-w-sm mx-auto">
             {searchQuery
               ? `No character matching "${searchQuery}".`
-              : 'Create your first RP character or import a Tavern card!'}
+              : canEdit
+              ? 'Create your first RP character or import a Tavern card!'
+              : 'No characters currently available.'}
           </p>
-          <div className="mt-4 flex justify-center gap-3">
-            <button
-              onClick={() => navigate('/characters/new')}
-              className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-semibold shadow-glow-violet transition-all"
-            >
-              Create Character
-            </button>
-          </div>
+          {canEdit && (
+            <div className="mt-4 flex justify-center gap-3">
+              <button
+                onClick={() => navigate('/characters/new')}
+                className="px-4 py-2 bg-brand-600 hover:bg-brand-500 text-white rounded-xl text-xs font-semibold shadow-glow-violet transition-all"
+              >
+                Create Character
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredCharacters.map(char => {
             const prefix = char.discord_config?.trigger_prefix || 'none';
             const modelName = char.model_config?.model || 'Server Default';
-            const provider = char.model_config?.provider || 'server_default';
 
             return (
               <div
@@ -251,7 +260,7 @@ export const CharactersPage: React.FC = () => {
                         {char.tagline || char.description || 'AI Roleplay Character'}
                       </p>
 
-                      {/* Discord Trigger & Provider Badges */}
+                      {/* Discord Trigger & Model Badges */}
                       <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
                         <span className="text-[10px] font-mono font-semibold bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded">
                           Prefix: {prefix}
@@ -294,21 +303,25 @@ export const CharactersPage: React.FC = () => {
                   </button>
 
                   <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => navigate(`/characters/${char.id}`)}
-                      title="Edit Character"
-                      className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-xl transition-colors"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
+                    {canEdit && (
+                      <>
+                        <button
+                          onClick={() => navigate(`/characters/${char.id}`)}
+                          title="Edit Character"
+                          className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-xl transition-colors"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
 
-                    <button
-                      onClick={() => handleDuplicate(char.id)}
-                      title="Duplicate Character"
-                      className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-xl transition-colors"
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
+                        <button
+                          onClick={() => handleDuplicate(char.id)}
+                          title="Duplicate Character"
+                          className="p-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-xl transition-colors"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
 
                     <a
                       href={`/api/characters/${char.id}/export`}
@@ -319,13 +332,15 @@ export const CharactersPage: React.FC = () => {
                       <Download className="w-4 h-4" />
                     </a>
 
-                    <button
-                      onClick={() => setDeleteModalChar(char)}
-                      title="Delete Character"
-                      className="p-2 text-zinc-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-xl transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {canEdit && (
+                      <button
+                        onClick={() => setDeleteModalChar(char)}
+                        title="Delete Character"
+                        className="p-2 text-zinc-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-xl transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

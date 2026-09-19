@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Sparkles, Lock, User as UserIcon, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Sparkles, Lock, User as UserIcon, ArrowRight } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 
 export const LoginPage: React.FC = () => {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const { success, error } = useToast();
@@ -17,11 +17,11 @@ export const LoginPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username || !password) return;
+    if (!username.trim() || !password) return;
 
     setLoading(true);
     try {
-      await login(username, password);
+      await login(username.trim(), password);
       success(`Welcome back, ${username}!`);
       navigate(from, { replace: true });
     } catch (err: any) {
@@ -64,10 +64,11 @@ export const LoginPage: React.FC = () => {
                 <input
                   type="text"
                   required
+                  autoFocus
                   value={username}
                   onChange={e => setUsername(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-zinc-900/80 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 text-sm transition-colors"
-                  placeholder="admin"
+                  placeholder="Enter your username"
                 />
               </div>
             </div>
@@ -86,14 +87,14 @@ export const LoginPage: React.FC = () => {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-zinc-900/80 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 text-sm transition-colors"
-                  placeholder="••••••••"
+                  placeholder="Enter your password"
                 />
               </div>
             </div>
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !username.trim() || !password}
               className="w-full mt-2 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-sm shadow-glow-violet transition-all duration-200 active:scale-[0.99] disabled:opacity-50"
             >
               {loading ? (
@@ -106,17 +107,9 @@ export const LoginPage: React.FC = () => {
               )}
             </button>
           </form>
-
-          {/* Quick Default Credentials Note */}
-          <div className="mt-6 pt-5 border-t border-zinc-800/80 text-center">
-            <div className="flex items-center justify-center gap-1.5 text-xs text-zinc-400">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Default Credentials: <code className="text-zinc-200 bg-zinc-900 px-1 py-0.5 rounded">admin</code> / <code className="text-zinc-200 bg-zinc-900 px-1 py-0.5 rounded">admin123</code></span>
-            </div>
-          </div>
         </div>
 
-        <p className="text-center text-xs text-zinc-400 mt-6 font-mono">
+        <p className="text-center text-xs text-zinc-500 mt-6 font-mono">
           Optimized for ZimaOS, CasaOS, and Docker environments
         </p>
       </div>

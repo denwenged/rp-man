@@ -10,7 +10,7 @@ export const providersRouter = Router();
 
 providersRouter.use(authMiddleware);
 
-// List providers
+// List providers (Authenticated users can read list of configured providers)
 providersRouter.get('/', (req: AuthenticatedRequest, res: Response) => {
   try {
     const rows = db.prepare('SELECT id, name, type, base_url, api_key, enabled, default_model, is_default, created_at, updated_at FROM llm_providers ORDER BY created_at ASC').all() as any[];
@@ -127,8 +127,8 @@ providersRouter.delete('/:id', requireAdmin, (req: AuthenticatedRequest, res: Re
   }
 });
 
-// Test Provider Connection
-providersRouter.post('/:id/test', async (req: AuthenticatedRequest, res: Response) => {
+// Test Provider Connection (Admin only)
+providersRouter.post('/:id/test', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   try {
     const provider = db.prepare('SELECT * FROM llm_providers WHERE id = ?').get(id) as any;
@@ -146,7 +146,6 @@ providersRouter.post('/:id/test', async (req: AuthenticatedRequest, res: Respons
       }
     }
 
-    // Try fetching models or basic GET
     let endpoint = targetUrl.includes('/v1') ? `${targetUrl}/models` : targetUrl;
     if (provider.type === 'ollama') {
       endpoint = `${targetUrl}/api/tags`;

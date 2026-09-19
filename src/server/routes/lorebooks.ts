@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import crypto from 'crypto';
 import { db } from '../db';
-import { authMiddleware, AuthenticatedRequest } from '../middleware/auth';
+import { authMiddleware, requireEditorOrAdmin, AuthenticatedRequest } from '../middleware/auth';
 import { Lorebook, LoreEntry } from '../../shared/types';
 
 export const lorebooksRouter = Router();
@@ -19,7 +19,7 @@ function formatEntry(row: any): LoreEntry {
   };
 }
 
-// List lorebooks
+// List lorebooks (Readable by all authenticated users)
 lorebooksRouter.get('/', (req: AuthenticatedRequest, res: Response) => {
   try {
     const rows = db.prepare(`
@@ -34,7 +34,7 @@ lorebooksRouter.get('/', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Get lorebook with its entries
+// Get lorebook with its entries (Readable by all authenticated users)
 lorebooksRouter.get('/:id', (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   try {
@@ -54,8 +54,8 @@ lorebooksRouter.get('/:id', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Create lorebook
-lorebooksRouter.post('/', (req: AuthenticatedRequest, res: Response) => {
+// Create lorebook (Editor or Admin only)
+lorebooksRouter.post('/', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { name, description = '' } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
 
@@ -76,8 +76,8 @@ lorebooksRouter.post('/', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Update lorebook
-lorebooksRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
+// Update lorebook (Editor or Admin only)
+lorebooksRouter.put('/:id', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { name, description } = req.body;
   const now = new Date().toISOString();
@@ -98,8 +98,8 @@ lorebooksRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Delete lorebook
-lorebooksRouter.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
+// Delete lorebook (Editor or Admin only)
+lorebooksRouter.delete('/:id', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   try {
     db.prepare('DELETE FROM lorebooks WHERE id = ?').run(id);
@@ -109,8 +109,8 @@ lorebooksRouter.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Create entry in lorebook
-lorebooksRouter.post('/:id/entries', (req: AuthenticatedRequest, res: Response) => {
+// Create entry in lorebook (Editor or Admin only)
+lorebooksRouter.post('/:id/entries', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { id: lorebook_id } = req.params;
   const {
     keys = [],
@@ -156,8 +156,8 @@ lorebooksRouter.post('/:id/entries', (req: AuthenticatedRequest, res: Response) 
   }
 });
 
-// Update entry
-lorebooksRouter.put('/entries/:entryId', (req: AuthenticatedRequest, res: Response) => {
+// Update entry (Editor or Admin only)
+lorebooksRouter.put('/entries/:entryId', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { entryId } = req.params;
   const { keys, secondary_keys, content, comment, enabled, constant, selective, priority, order_index } = req.body;
   const now = new Date().toISOString();
@@ -200,8 +200,8 @@ lorebooksRouter.put('/entries/:entryId', (req: AuthenticatedRequest, res: Respon
   }
 });
 
-// Delete entry
-lorebooksRouter.delete('/entries/:entryId', (req: AuthenticatedRequest, res: Response) => {
+// Delete entry (Editor or Admin only)
+lorebooksRouter.delete('/entries/:entryId', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { entryId } = req.params;
   try {
     db.prepare('DELETE FROM lore_entries WHERE id = ?').run(entryId);

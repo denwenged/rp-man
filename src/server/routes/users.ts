@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { db } from '../db';
 import { authMiddleware, requireAdmin, AuthenticatedRequest } from '../middleware/auth';
 import { logger } from '../services/loggerService';
-import { User } from '../../shared/types';
+import { User, UserRole } from '../../shared/types';
 
 export const usersRouter = Router();
 
@@ -28,7 +28,8 @@ usersRouter.post('/', requireAdmin, (req: AuthenticatedRequest, res: Response) =
   }
 
   const cleanUser = username.trim();
-  const cleanRole = role === 'admin' ? 'admin' : 'user';
+  const validRoles: UserRole[] = ['admin', 'editor', 'user'];
+  const cleanRole: UserRole = validRoles.includes(role) ? role : 'user';
 
   try {
     const existing = db.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)').get(cleanUser);
@@ -46,7 +47,7 @@ usersRouter.post('/', requireAdmin, (req: AuthenticatedRequest, res: Response) =
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(id, cleanUser, password_hash, cleanRole, avatar, now, now);
 
-    logger.info('AUTH', `Admin ${req.user!.username} created user ${cleanUser} (${cleanRole})`);
+    logger.info('AUTH', `Admin ${req.user!.username} created user ${cleanUser} with role ${cleanRole}`);
 
     const newUser: User = {
       id,
@@ -80,7 +81,8 @@ usersRouter.put('/:id', requireAdmin, (req: AuthenticatedRequest, res: Response)
       db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hash, now, id);
     }
 
-    if (role && (role === 'admin' || role === 'user')) {
+    const validRoles: UserRole[] = ['admin', 'editor', 'user'];
+    if (role && validRoles.includes(role)) {
       db.prepare('UPDATE users SET role = ?, updated_at = ? WHERE id = ?').run(role, now, id);
     }
 
@@ -89,7 +91,7 @@ usersRouter.put('/:id', requireAdmin, (req: AuthenticatedRequest, res: Response)
     }
 
     const updated = db.prepare('SELECT id, username, role, avatar_url, created_at, updated_at FROM users WHERE id = ?').get(id) as User;
-    logger.info('AUTH', `Admin ${req.user!.username} updated user ${updated.username}`);
+    logger.info('AUTH', `Admin ${req.user!.username} updated user ${updated.username} (role: ${updated.role})`);
     return res.json({ user: updated });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });

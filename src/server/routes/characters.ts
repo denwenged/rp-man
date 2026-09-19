@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'crypto';
 import multer from 'multer';
 import { db } from '../db';
-import { authMiddleware, AuthenticatedRequest } from '../middleware/auth';
+import { authMiddleware, requireEditorOrAdmin, AuthenticatedRequest } from '../middleware/auth';
 import { logger } from '../services/loggerService';
 import { Character, UserRelationship } from '../../shared/types';
 import { CardImportExport } from '../services/cardImportExport';
@@ -29,7 +29,7 @@ function formatCharacter(row: any): Character {
   };
 }
 
-// List characters
+// List characters (All authenticated users can browse public characters)
 charactersRouter.get('/', (req: AuthenticatedRequest, res: Response) => {
   const userId = req.user!.id;
   const isAdmin = req.user!.role === 'admin';
@@ -71,8 +71,8 @@ charactersRouter.get('/:id', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Create character
-charactersRouter.post('/', (req: AuthenticatedRequest, res: Response) => {
+// Create character (Editor or Admin only)
+charactersRouter.post('/', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const userId = req.user!.id;
   const now = new Date().toISOString();
   const id = `char_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
@@ -146,8 +146,8 @@ charactersRouter.post('/', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Update character
-charactersRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
+// Update character (Editor or Admin only)
+charactersRouter.put('/:id', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const userId = req.user!.id;
   const isAdmin = req.user!.role === 'admin';
@@ -236,8 +236,8 @@ charactersRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Delete character
-charactersRouter.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
+// Delete character (Editor or Admin only)
+charactersRouter.delete('/:id', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const userId = req.user!.id;
   const isAdmin = req.user!.role === 'admin';
@@ -254,8 +254,8 @@ charactersRouter.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Duplicate character
-charactersRouter.post('/:id/duplicate', (req: AuthenticatedRequest, res: Response) => {
+// Duplicate character (Editor or Admin only)
+charactersRouter.post('/:id/duplicate', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const userId = req.user!.id;
   const now = new Date().toISOString();
@@ -314,7 +314,7 @@ charactersRouter.post('/:id/duplicate', (req: AuthenticatedRequest, res: Respons
   }
 });
 
-// Export Tavern V2 JSON
+// Export Tavern V2 JSON (Readable by all authenticated users)
 charactersRouter.get('/:id/export', (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   try {
@@ -331,8 +331,8 @@ charactersRouter.get('/:id/export', (req: AuthenticatedRequest, res: Response) =
   }
 });
 
-// Import Tavern V2 JSON or PNG Card
-charactersRouter.post('/import', upload.single('file'), (req: AuthenticatedRequest, res: Response) => {
+// Import Tavern V2 JSON or PNG Card (Editor or Admin only)
+charactersRouter.post('/import', requireEditorOrAdmin, upload.single('file'), (req: AuthenticatedRequest, res: Response) => {
   const userId = req.user!.id;
   const now = new Date().toISOString();
   const id = `char_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
@@ -399,7 +399,7 @@ charactersRouter.post('/import', upload.single('file'), (req: AuthenticatedReque
 });
 
 // ================= USER RELATIONSHIPS CRUD =================
-// List relationships for character
+// List relationships for character (Readable by authenticated users)
 charactersRouter.get('/:id/relationships', (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   try {
@@ -410,8 +410,8 @@ charactersRouter.get('/:id/relationships', (req: AuthenticatedRequest, res: Resp
   }
 });
 
-// Add relationship
-charactersRouter.post('/:id/relationships', (req: AuthenticatedRequest, res: Response) => {
+// Add relationship (Editor or Admin only)
+charactersRouter.post('/:id/relationships', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { id: character_id } = req.params;
   const { user_identifier, relationship_type, relationship_notes, affinity_level = 50 } = req.body;
   if (!user_identifier || !relationship_type || !relationship_notes) {
@@ -434,8 +434,8 @@ charactersRouter.post('/:id/relationships', (req: AuthenticatedRequest, res: Res
   }
 });
 
-// Update relationship
-charactersRouter.put('/relationships/:relId', (req: AuthenticatedRequest, res: Response) => {
+// Update relationship (Editor or Admin only)
+charactersRouter.put('/relationships/:relId', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { relId } = req.params;
   const { user_identifier, relationship_type, relationship_notes, affinity_level } = req.body;
   const now = new Date().toISOString();
@@ -458,8 +458,8 @@ charactersRouter.put('/relationships/:relId', (req: AuthenticatedRequest, res: R
   }
 });
 
-// Delete relationship
-charactersRouter.delete('/relationships/:relId', (req: AuthenticatedRequest, res: Response) => {
+// Delete relationship (Editor or Admin only)
+charactersRouter.delete('/relationships/:relId', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
   const { relId } = req.params;
   try {
     db.prepare('DELETE FROM user_relationships WHERE id = ?').run(relId);

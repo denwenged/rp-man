@@ -15,6 +15,7 @@ import {
   LogOut,
   Sparkles,
   ShieldAlert,
+  User,
   Heart
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,19 +28,25 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { user, logout } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const isEditor = user?.role === 'editor';
+  const canEditLore = isAdmin || isEditor;
 
   const navItems = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/characters', label: 'RP Characters', icon: Users2 },
     { to: '/playground', label: 'Live RP Chat', icon: MessageSquareCode, badge: 'Solo' },
     { to: '/groups', label: 'Group RP Lounge', icon: Users, badge: 'Multi' },
-    { to: '/discord', label: 'Discord Bot & Webhooks', icon: Bot, highlight: true },
-    { to: '/ollama', label: 'Ollama Model Hub', icon: Server },
-    { to: '/providers', label: 'LLM Providers', icon: Cpu },
-    { to: '/lorebooks', label: 'World Books & Lore', icon: BookOpen },
-    ...(isAdmin ? [{ to: '/users', label: 'User Management', icon: UserCheck }] : []),
-    { to: '/settings', label: 'Server & RAM Tuning', icon: Settings },
-    { to: '/logs', label: 'Live Logs', icon: Terminal },
+    ...(canEditLore ? [{ to: '/lorebooks', label: 'World Books & Lore', icon: BookOpen }] : []),
+    ...(isAdmin
+      ? [
+          { to: '/discord', label: 'Discord Bot & Webhooks', icon: Bot, highlight: true },
+          { to: '/ollama', label: 'Ollama Model Hub', icon: Server },
+          { to: '/providers', label: 'LLM Providers', icon: Cpu },
+          { to: '/users', label: 'User Management', icon: UserCheck },
+          { to: '/settings', label: 'Server & RAM Tuning', icon: Settings },
+          { to: '/logs', label: 'Live Logs', icon: Terminal },
+        ]
+      : []),
   ];
 
   return (
@@ -77,7 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         {/* Navigation */}
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
           <div className="px-3 pb-2 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-            Management
+            {isAdmin ? 'System & RP Management' : isEditor ? 'Roleplay Studio' : 'Roleplay Lounge'}
           </div>
           {navItems.map(item => {
             const Icon = item.icon;
@@ -133,8 +140,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-zinc-200 truncate">{user?.username}</p>
                 <div className="flex items-center gap-1">
-                  {user?.role === 'admin' && <ShieldAlert className="w-3 h-3 text-amber-400" />}
-                  <span className="text-[10px] capitalize text-zinc-400">{user?.role || 'user'}</span>
+                  {user?.role === 'admin' && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-400 font-semibold">
+                      <ShieldAlert className="w-3 h-3" /> Admin
+                    </span>
+                  )}
+                  {user?.role === 'editor' && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-brand-300 font-semibold">
+                      <Sparkles className="w-3 h-3" /> Editor
+                    </span>
+                  )}
+                  {user?.role === 'user' && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-zinc-400 font-medium">
+                      <User className="w-3 h-3" /> Standard User
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

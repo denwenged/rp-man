@@ -17,10 +17,11 @@ import { UserManagementPage } from './pages/UserManagementPage';
 import { ServerSettingsPage } from './pages/ServerSettingsPage';
 import { LogsPage } from './pages/LogsPage';
 
-const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({
-  children,
-  requireAdmin = false,
-}) => {
+const ProtectedRoute: React.FC<{
+  children: React.ReactNode;
+  requireAdmin?: boolean;
+  requireEditor?: boolean;
+}> = ({ children, requireAdmin = false, requireEditor = false }) => {
   const { isAuthenticated, isLoading, user } = useAuth();
 
   if (isLoading) {
@@ -37,6 +38,10 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
 
   if (requireAdmin && user?.role !== 'admin') {
     return <Navigate to="/" replace />;
+  }
+
+  if (requireEditor && user?.role !== 'admin' && user?.role !== 'editor') {
+    return <Navigate to="/characters" replace />;
   }
 
   return <>{children}</>;
@@ -60,13 +65,50 @@ export const App: React.FC = () => {
             >
               <Route index element={<DashboardPage />} />
               <Route path="characters" element={<CharactersPage />} />
-              <Route path="characters/:id" element={<CharacterEditorPage />} />
+              <Route
+                path="characters/:id"
+                element={
+                  <ProtectedRoute requireEditor>
+                    <CharacterEditorPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="playground" element={<ChatPlaygroundPage />} />
               <Route path="groups" element={<GroupChatPage />} />
-              <Route path="discord" element={<DiscordBotPage />} />
-              <Route path="ollama" element={<OllamaManagerPage />} />
-              <Route path="providers" element={<ProvidersPage />} />
-              <Route path="lorebooks" element={<LorebooksPage />} />
+              <Route
+                path="lorebooks"
+                element={
+                  <ProtectedRoute requireEditor>
+                    <LorebooksPage />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Administrator Only Routes */}
+              <Route
+                path="discord"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <DiscordBotPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="ollama"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <OllamaManagerPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="providers"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <ProvidersPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="users"
                 element={
@@ -75,8 +117,22 @@ export const App: React.FC = () => {
                   </ProtectedRoute>
                 }
               />
-              <Route path="settings" element={<ServerSettingsPage />} />
-              <Route path="logs" element={<LogsPage />} />
+              <Route
+                path="settings"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <ServerSettingsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="logs"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <LogsPage />
+                  </ProtectedRoute>
+                }
+              />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

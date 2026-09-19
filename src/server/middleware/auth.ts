@@ -69,3 +69,10 @@ export function requireAdmin(req: AuthenticatedRequest, res: Response, next: Nex
   }
   next();
 }
+
+export function requireEditorOrAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'editor')) {
+    return res.status(403).json({ error: 'Editor or Admin privileges required to modify character assets' });
+  }
+  next();
+}

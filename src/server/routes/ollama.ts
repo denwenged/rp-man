@@ -1,13 +1,13 @@
 import { Router, Response } from 'express';
 import { ollamaService } from '../services/ollamaService';
-import { authMiddleware, AuthenticatedRequest } from '../middleware/auth';
+import { authMiddleware, requireAdmin, AuthenticatedRequest } from '../middleware/auth';
 import { logger } from '../services/loggerService';
 
 export const ollamaRouter = Router();
 
 ollamaRouter.use(authMiddleware);
 
-// Check Ollama status & latency
+// Check Ollama status & latency (Readable by all authenticated users)
 ollamaRouter.get('/status', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const status = await ollamaService.checkConnection();
@@ -25,7 +25,7 @@ ollamaRouter.get('/status', async (req: AuthenticatedRequest, res: Response) => 
   }
 });
 
-// List installed models
+// List installed models (Readable by all authenticated users to select models in character editor)
 ollamaRouter.get('/models', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const models = await ollamaService.getModels();
@@ -45,8 +45,8 @@ ollamaRouter.get('/ps', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Unload a specific model from RAM
-ollamaRouter.post('/unload', async (req: AuthenticatedRequest, res: Response) => {
+// Unload a specific model from RAM (Admin only)
+ollamaRouter.post('/unload', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { model } = req.body;
   if (!model) {
     return res.status(400).json({ error: 'Model name is required' });
@@ -60,8 +60,8 @@ ollamaRouter.post('/unload', async (req: AuthenticatedRequest, res: Response) =>
   }
 });
 
-// Unload all models from RAM
-ollamaRouter.post('/unload-all', async (req: AuthenticatedRequest, res: Response) => {
+// Unload all models from RAM (Admin only)
+ollamaRouter.post('/unload-all', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const result = await ollamaService.unloadAllModels();
     return res.json(result);
@@ -70,8 +70,8 @@ ollamaRouter.post('/unload-all', async (req: AuthenticatedRequest, res: Response
   }
 });
 
-// Delete a model
-ollamaRouter.delete('/models/:name', async (req: AuthenticatedRequest, res: Response) => {
+// Delete a model (Admin only)
+ollamaRouter.delete('/models/:name', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { name } = req.params;
   try {
     const result = await ollamaService.deleteModel(name);
@@ -86,8 +86,8 @@ ollamaRouter.get('/pulls', (req: AuthenticatedRequest, res: Response) => {
   return res.json({ pulls: ollamaService.getActivePulls() });
 });
 
-// Pull / download a model
-ollamaRouter.post('/pull', async (req: AuthenticatedRequest, res: Response) => {
+// Pull / download a model (Admin only)
+ollamaRouter.post('/pull', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { name } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Model name is required (e.g. llama3.2:3b)' });
@@ -106,8 +106,8 @@ ollamaRouter.post('/pull', async (req: AuthenticatedRequest, res: Response) => {
   });
 });
 
-// Create custom model with modelfile
-ollamaRouter.post('/create', async (req: AuthenticatedRequest, res: Response) => {
+// Create custom model with modelfile (Admin only)
+ollamaRouter.post('/create', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const { name, modelfile } = req.body;
   if (!name || !modelfile) {
     return res.status(400).json({ error: 'Name and Modelfile content are required' });
