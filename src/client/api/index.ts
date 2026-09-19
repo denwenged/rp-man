@@ -186,6 +186,33 @@ class ApiClient {
     await this.request(`/characters/relationships/${relId}`, { method: 'DELETE' });
   }
 
+  // Character Mind & Memories
+  async getCharacterMemories(characterId: string): Promise<{ memories: any[] }> {
+    return this.request<{ memories: any[] }>(`/characters/${characterId}/memories`);
+  }
+
+  async addCharacterMemory(characterId: string, data: { user_identifier: string; user_display_name?: string; memory_text: string; category?: string }): Promise<{ memory: any }> {
+    return this.request<{ memory: any }>(`/characters/${characterId}/memories`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateCharacterMemory(memoryId: string, data: Partial<any>): Promise<{ memory: any }> {
+    return this.request<{ memory: any }>(`/characters/memories/${memoryId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteCharacterMemory(memoryId: string): Promise<void> {
+    await this.request(`/characters/memories/${memoryId}`, { method: 'DELETE' });
+  }
+
+  async clearUserMemories(characterId: string, userId: string): Promise<void> {
+    await this.request(`/characters/${characterId}/memories/user/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+  }
+
   // Chats
   async getChatSessions(characterId?: string): Promise<{ sessions: any[] }> {
     const q = characterId ? `?character_id=${encodeURIComponent(characterId)}` : '';

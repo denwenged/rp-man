@@ -69,14 +69,36 @@ export interface UserRelationship {
   updated_at: string;
 }
 
+export interface CharacterMemory {
+  id: string;
+  character_id: string;
+  user_identifier: string; // Discord user ID or Web persona name
+  user_display_name?: string;
+  memory_text: string; // Key recalled fact / note about user
+  category?: string; // 'fact', 'preference', 'backstory', 'event'
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserPersona {
+  id: string;
+  user_identifier: string; // Discord ID or username
+  preferred_name: string;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CharacterDiscordConfig {
   trigger_prefix?: string;
   trigger_suffix?: string;
   webhook_url?: string;
   channel_ids?: string[];
+  bound_channels?: string[]; // Channels where character replies to every message automatically
   auto_react?: boolean;
   reply_on_mention?: boolean;
   tupperbox_proxy?: boolean;
+  delete_trigger_message?: boolean; // Whether to delete user trigger message on prefix
 }
 
 export interface CharacterModelConfig {
@@ -91,6 +113,7 @@ export interface CharacterContextConfig {
   max_context_tokens: number;
   max_history_messages: number;
   enable_summary: boolean;
+  enable_memory: boolean; // Toggle for Character Mind & Long-Term Memory
   summary_token_threshold: number;
   lorebook_ids: string[];
 }
@@ -114,6 +137,7 @@ export interface Character {
   is_public: boolean;
   expressions?: CharacterExpression[];
   relationships?: UserRelationship[];
+  memories?: CharacterMemory[];
   model_config: CharacterModelConfig;
   discord_config: CharacterDiscordConfig;
   context_config: CharacterContextConfig;

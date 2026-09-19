@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { Character, ChatMessage, Lorebook, LoreEntry, ServerSettings, CharacterExpression, UserRelationship } from '../../shared/types';
+import { Character, ChatMessage, Lorebook, LoreEntry, ServerSettings, CharacterExpression, UserRelationship, CharacterMemory } from '../../shared/types';
 import { logger } from './loggerService';
 
 export interface FormattedPromptPayload {
@@ -9,6 +9,7 @@ export interface FormattedPromptPayload {
   injectedLore: string[];
   summaryIncluded: boolean;
   activeRelationship?: UserRelationship | null;
+  recalledMemories?: CharacterMemory[];
 }
 
 export class ContextManager {
@@ -44,6 +45,20 @@ export class ContextManager {
   }
 
   /**
+   * Retrieve preferred nickname for a user identifier
+   */
+  public static getUserPreferredName(userIdentifier: string, fallbackName: string): string {
+    if (!userIdentifier) return fallbackName || 'User';
+    try {
+      const row = db.prepare('SELECT preferred_name FROM user_personas WHERE user_identifier = ?').get(userIdentifier) as any;
+      if (row && row.preferred_name && row.preferred_name.trim()) {
+        return row.preferred_name.trim();
+      }
+    } catch (e) {}
+    return fallbackName || 'User';
+  }
+
+  /**
    * Find relationship between character and user
    */
   public static findRelationship(characterId: string, userIdentifier: string): UserRelationship | null {
@@ -71,6 +86,35 @@ export class ContextManager {
       logger.error('SYSTEM', 'Failed to query user relationship', e);
     }
     return null;
+  }
+
+  /**
+   * Retrieve recalled long-term memories / mind notes for a specific user
+   */
+  public static getCharacterMemories(characterId: string, userIdentifier: string, userName?: string): CharacterMemory[] {
+    if (!userIdentifier && !userName) return [];
+    try {
+      const rows = db.prepare(`
+        SELECT * FROM character_memories 
+        WHERE character_id = ? AND (user_identifier = ? OR LOWER(user_identifier) = LOWER(?) OR LOWER(user_display_name) = LOWER(?))
+        ORDER BY updated_at DESC
+        LIMIT 12
+      `).all(characterId, userIdentifier || '', userName || '', userName || '') as any[];
+
+      return rows.map(r => ({
+        id: r.id,
+        character_id: r.character_id,
+        user_identifier: r.user_identifier,
+        user_display_name: r.user_display_name,
+        memory_text: r.memory_text,
+        category: r.category || 'fact',
+        created_at: r.created_at,
+        updated_at: r.updated_at
+      }));
+    } catch (e) {
+      logger.error('SYSTEM', 'Failed to load character memories', e);
+      return [];
+    }
   }
 
   /**
@@ -212,8 +256,9 @@ export class ContextManager {
     serverHardCap?: number,
     discordUserId?: string
   ): FormattedPromptPayload {
-    const charName = character.name || 'Assistant';
-    const userName = userPersonaName || 'User';
+    const charName = character.name || 'Character';
+    // Resolve preferred nickname if available
+    const resolvedUserName = this.getUserPreferredName(discordUserId || '', userPersonaName || 'User');
 
     // 1. Lorebook Matching
     const recentMessagesText = history.slice(-5).map(m => m.content).join('\n');
@@ -221,53 +266,84 @@ export class ContextManager {
 
     // 2. User Relationship lookup (checks persona name or discord user ID)
     const relationship = this.findRelationship(character.id, discordUserId || '') ||
-                         this.findRelationship(character.id, userName);
+                         this.findRelationship(character.id, resolvedUserName);
 
-    // 3. Build Core System Prompt Sections
+    // 3. Recalled Memories (Character Mind)
+    const enableMemory = character.context_config?.enable_memory !== false;
+    const recalledMemories = enableMemory
+      ? this.getCharacterMemories(character.id, discordUserId || '', resolvedUserName)
+      : [];
+
+    // 4. Build System Prompt Sections
     const promptSections: string[] = [];
+
+    // Explicit Roleplay Framing to prevent AI self-confusion
+    promptSections.push(
+      `[CRITICAL ROLEPLAY INSTRUCTIONS & PERSPECTIVE]\n` +
+      `• You are ${charName}. You must NEVER speak for, impersonate, or roleplay as "${resolvedUserName}".\n` +
+      `• The user you are conversing with is "${resolvedUserName}".\n` +
+      `• Address "${resolvedUserName}" directly by name or natural title when speaking to them.\n` +
+      `• Respond strictly from the perspective of ${charName} using standard roleplay notation (*actions/thoughts in asterisks*, "spoken dialogue in quotes").\n` +
+      `• Stay authentic to your character traits, background, and tone at all times.`
+    );
 
     // Base System Prompt
     let baseSys = character.system_prompt?.trim();
-    if (!baseSys) {
-      baseSys = `You are ${charName}. Roleplay as ${charName} engaging with ${userName}. Respond in character with natural dialogue and descriptive actions using standard roleplay notation (*actions in asterisks*, "dialogue in quotes"). Stay strictly in character at all times.`;
+    if (baseSys) {
+      promptSections.push(`[Character Directives - ${charName}]\n${this.replaceMacros(baseSys, charName, resolvedUserName, character.scenario)}`);
     }
-    promptSections.push(this.replaceMacros(baseSys, charName, userName, character.scenario));
 
     // Persona & Description
     if (character.description?.trim()) {
-      promptSections.push(`[Character Persona - ${charName}]\n${this.replaceMacros(character.description, charName, userName)}`);
+      promptSections.push(`[Character Identity & Background]\n${this.replaceMacros(character.description, charName, resolvedUserName)}`);
     }
 
     if (character.personality?.trim()) {
-      promptSections.push(`[Personality Traits]\n${this.replaceMacros(character.personality, charName, userName)}`);
+      promptSections.push(`[Personality & Speech Habits]\n${this.replaceMacros(character.personality, charName, resolvedUserName)}`);
     }
 
-    // Scenario
+    // Scenario / Setting
     if (character.scenario?.trim()) {
-      promptSections.push(`[Scenario / Setting]\n${this.replaceMacros(character.scenario, charName, userName, character.scenario)}`);
+      promptSections.push(`[Current Scene / Setting]\n${this.replaceMacros(character.scenario, charName, resolvedUserName, character.scenario)}`);
     }
 
-    // Dynamic Relationship Instructions with this specific User
+    // Dynamic User Relationship Directives
     if (relationship) {
-      promptSections.push(`[Your Bond & Relationship with {{user}}]\nRelationship Type: ${relationship.relationship_type} (Affinity: ${relationship.affinity_level}/100)\nDirectives: ${this.replaceMacros(relationship.relationship_notes, charName, userName)}`);
+      promptSections.push(
+        `[Your Bond & Relationship with "${resolvedUserName}"]\n` +
+        `• Relationship: ${relationship.relationship_type} (Affinity Level: ${relationship.affinity_level}/100)\n` +
+        `• Directives: ${this.replaceMacros(relationship.relationship_notes, charName, resolvedUserName)}`
+      );
     }
 
-    // Emotion Expressions Directive
+    // Character Mind / Long-Term Recalled Memories
+    if (recalledMemories.length > 0) {
+      const memoryLines = recalledMemories.map(m => `• ${m.memory_text}`).join('\n');
+      promptSections.push(
+        `[Character's Long-Term Memory & Notes About "${resolvedUserName}"]\n` +
+        `${memoryLines}\n` +
+        `*(You recall these details naturally from previous interactions with ${resolvedUserName}. Reference them when appropriate.)*`
+      );
+    }
+
+    // Emotion Expression Directive
     if (character.expressions && character.expressions.length > 0) {
       const expList = character.expressions.map(e => `${e.name} ${e.emoji || ''}`).join(', ');
-      promptSections.push(`[Emotion Expressions]:\nYou have the following emotion avatars available: [${expList}]. Express your mood naturally or tag it using [emotion: mood_name] (e.g. [emotion: angry] or [emotion: smug]) to dynamically update your avatar expression.`);
+      promptSections.push(
+        `[Emotion Expressions]:\nAvailable moods: [${expList}]. You can optionally append [emotion: mood_name] (e.g. [emotion: angry] or [emotion: happy]) to switch your avatar face.`
+      );
     }
 
     // Example Dialogues
     if (character.mes_example?.trim()) {
-      promptSections.push(`[Example Dialogue]\n${this.replaceMacros(character.mes_example, charName, userName)}`);
+      promptSections.push(`[Dialogue Examples]\n${this.replaceMacros(character.mes_example, charName, resolvedUserName)}`);
     }
 
     // Injected World Lore
     const injectedLoreTexts: string[] = [];
     if (matchedLore.length > 0) {
       const loreBlock = matchedLore
-        .map(entry => this.replaceMacros(entry.content, charName, userName))
+        .map(entry => this.replaceMacros(entry.content, charName, resolvedUserName))
         .join('\n');
       promptSections.push(`[World Lore / Background Information]\n${loreBlock}`);
       injectedLoreTexts.push(...matchedLore.map(e => e.comment || e.keys.join(', ')));
@@ -276,18 +352,18 @@ export class ContextManager {
     // Rolling Summary
     let summaryIncluded = false;
     if (rollingSummary?.trim()) {
-      promptSections.push(`[Summary of Previous Events in Roleplay]\n${this.replaceMacros(rollingSummary, charName, userName)}`);
+      promptSections.push(`[Summary of Previous Events in Roleplay]\n${this.replaceMacros(rollingSummary, charName, resolvedUserName)}`);
       summaryIncluded = true;
     }
 
     // Post-History / Formatting guard
     if (character.post_history_instructions?.trim()) {
-      promptSections.push(`[Special Instructions]\n${this.replaceMacros(character.post_history_instructions, charName, userName)}`);
+      promptSections.push(`[Special Behavioral Constraints]\n${this.replaceMacros(character.post_history_instructions, charName, resolvedUserName)}`);
     }
 
     const fullSystemPrompt = promptSections.join('\n\n');
 
-    // 4. Token Budgeting & Sliding Window
+    // 5. Token Budgeting & Sliding Window
     const charContextLimit = character.context_config?.max_context_tokens || 4096;
     const maxTokensBudget = Math.min(charContextLimit, serverHardCap || 8192);
     const maxResponseTokens = character.model_config?.parameters?.max_tokens || 400;
@@ -303,7 +379,7 @@ export class ContextManager {
 
     for (let i = candidateHistory.length - 1; i >= 0; i--) {
       const msg = candidateHistory[i];
-      const processedContent = this.replaceMacros(msg.content, charName, userName);
+      const processedContent = this.replaceMacros(msg.content, charName, resolvedUserName);
       const msgTokens = this.estimateTokens(processedContent) + 8;
 
       if (currentHistoryTokens + msgTokens > availableForHistory && formattedMessages.length > 0) {
@@ -325,7 +401,8 @@ export class ContextManager {
       estimatedTokens: totalEstimatedTokens,
       injectedLore: injectedLoreTexts,
       summaryIncluded,
-      activeRelationship: relationship
+      activeRelationship: relationship,
+      recalledMemories
     };
   }
 }

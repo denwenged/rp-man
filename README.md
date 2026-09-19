@@ -9,14 +9,21 @@
 ### 🎭 Full RP Character Manager & Tavern V2 Support
 - **Character Creator & Editor**: Deep customization including Name, Avatar (upload or URL), Tagline, Description, Personality Traits, Backstory, Scenario, First Message (Greeting), and Alternate Greetings.
 - **Tavern Card V2 Support**: Full import and export compatibility with Tavern V2 JSON character cards and embedded `.png` character cards.
-- **Prompt Engineering**: Custom system prompts, macros (`{{char}}`, `{{user}}`, `{{scenario}}`, `{{time}}`), and anti-break post-history instructions.
+- **Dynamic Character Expressions & Emotion Avatars**: Define mood triggers and emojis (e.g. `😡 angry`, `😳 blushing`, `😊 happy`, `✨ neutral`). Characters intelligently switch their Discord webhook avatar and web face dynamically during roleplay based on their emotional state.
+- **User Relationships System**: Configure customized relationships per user or Discord ID (Father, Friend, Rival, Master, Apprentice, Romantic, etc.) with individual behavioral directives so characters treat different people uniquely.
+- **Persistent Character "Mind" & Memory System**: Characters retain long-term memory notes and key facts about specific users across sessions. Easily inspect, add, edit, or wipe memories in the Character Mind inspector or via Discord commands.
+- **Prompt Engineering**: Custom system prompts, macros (`{{char}}`, `{{user}}`, `{{scenario}}`, `{{time}}`), and anti-confusion roleplay framing that prevents the AI from roleplaying as the user.
 - **Per-Character AI Hyperparameters**: Custom temperature, top_p, max response tokens, repeat penalty, stop sequences, and keep-alive duration.
 
-### 🤖 Discord Bot & Tupperbox Webhook Proxying
+### 🤖 Discord Bot, Dedicated Bound Channels & Tupperbox Proxying
 - **Tupperbox-Style Proxying**: When users type character triggers (e.g., `aria: hello`, `luna: hey`), RP-Man proxies the message, generates the response, and speaks in the channel using a dynamic Discord Webhook with the character's custom name and avatar.
-- **Dedicated Channel Routing**: Map specific Discord channels directly to characters without requiring prefixes.
-- **Slash Commands**: `/chat`, `/characters`, `/reset`, `/status`.
-- **Direct Webhook Dispatcher**: Direct outbound webhook tester to trigger character messages into any Discord channel.
+- **Dedicated Bound Channels**: Bind characters to specific Discord text channels so they automatically converse without needing prefixes or mentions.
+- **Message Preservation**: Retains original trigger messages during mentions and bound channel roleplay.
+- **Multi-Character Roleplay (`/convo`)**: Orchestrate group conversations between multiple characters on Discord with a single command.
+- **User Nicknames (`/nickname`, `!nick`)**: Set preferred roleplay names so bots address you by name.
+- **Single-User Memory Reset (`/reset`, `/forgetme`)**: Wipe long-term character memories for individual users on demand.
+- **Slash Commands**: `/chat`, `/convo`, `/nickname`, `/reset`, `/forgetme`, `/characters`, `/status`.
+- **Direct Webhook Dispatcher**: Outbound webhook tester to trigger character messages into any Discord channel.
 - **Discord Bot Controls**: Live gateway connect/disconnect/restart buttons, ping latency meter, and guild status.
 
 ### 🦙 Ollama Model Hub & Low-RAM Memory Tuning
@@ -51,9 +58,12 @@
 - **In-Place Message Editing**: Edit user prompts or AI outputs.
 - **Context Inspector**: View compiled system prompts, injected lore, and token budgets.
 
-### 🔐 Multi-User Logins & Security
-- User management dashboard: Create users, assign roles (`admin` / `user`), reset passwords.
-- Public vs Private character visibility.
+### 🔐 Multi-User Logins & 3-Tier RBAC
+- **Multi-Role Access Control**:
+  - `Admin`: Full access including Server Settings, LLM endpoint configuration, Ollama model downloads/unloads, user management, and DB backups.
+  - `Character Editor`: Can create, edit, clone, and manage RP characters, expressions, lorebooks, and test in playgrounds, but cannot alter server infrastructure or LLM configurations.
+  - `Standard User`: Clean roleplay-only view for chatting in the Playground and Multi-Character Lounge without administrative menus.
+- Clean matte black login screen without pre-filled sensitive credentials.
 - Database backup (1-click JSON export) and disaster recovery restore.
 - Real-time SSE live activity and terminal logs.
 

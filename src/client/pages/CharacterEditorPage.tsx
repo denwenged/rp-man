@@ -14,26 +14,29 @@ import {
   Trash2,
   Heart,
   Smile,
+  Brain,
   Check,
   Edit2,
-  Users
+  Users,
+  ShieldAlert,
+  Hash
 } from 'lucide-react';
 import { api } from '../api';
-import { Character, Lorebook, OllamaModelInfo, CharacterExpression, UserRelationship } from '../../shared/types';
+import { Character, Lorebook, OllamaModelInfo, CharacterExpression, UserRelationship, CharacterMemory } from '../../shared/types';
 import { useToast } from '../contexts/ToastContext';
 
 export const CharacterEditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const isNew = !id || id === 'new';
 
-  const [activeTab, setActiveTab] = useState<'persona' | 'expressions' | 'relationships' | 'model' | 'context' | 'discord' | 'advanced'>('persona');
+  const [activeTab, setActiveTab] = useState<'persona' | 'expressions' | 'relationships' | 'memory' | 'model' | 'context' | 'discord' | 'advanced'>('persona');
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [lorebooks, setLorebooks] = useState<Lorebook[]>([]);
   const [installedModels, setInstalledModels] = useState<OllamaModelInfo[]>([]);
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
-  const { success, error } = useToast();
+  const { success, error, info } = useToast();
   const navigate = useNavigate();
 
   // Character State
@@ -53,6 +56,7 @@ export const CharacterEditorPage: React.FC = () => {
     tags: [],
     expressions: [],
     relationships: [],
+    memories: [],
     is_public: true,
     model_config: {
       provider: 'server_default',
@@ -71,14 +75,17 @@ export const CharacterEditorPage: React.FC = () => {
       trigger_suffix: '',
       webhook_url: '',
       channel_ids: [],
+      bound_channels: [],
       auto_react: false,
       reply_on_mention: true,
-      tupperbox_proxy: true
+      tupperbox_proxy: true,
+      delete_trigger_message: true
     },
     context_config: {
       max_context_tokens: 4096,
       max_history_messages: 16,
       enable_summary: true,
+      enable_memory: true,
       summary_token_threshold: 3000,
       lorebook_ids: []
     }
@@ -86,6 +93,7 @@ export const CharacterEditorPage: React.FC = () => {
 
   const [tagInput, setTagInput] = useState('');
   const [channelInput, setChannelInput] = useState('');
+  const [boundChannelInput, setBoundChannelInput] = useState('');
   const [newGreetingInput, setNewGreetingInput] = useState('');
 
   // Expression Form State
@@ -98,6 +106,12 @@ export const CharacterEditorPage: React.FC = () => {
   const [relType, setRelType] = useState('Friend');
   const [relNotes, setRelNotes] = useState('');
   const [relAffinity, setRelAffinity] = useState(50);
+
+  // Memory Form State
+  const [memUserId, setMemUserId] = useState('');
+  const [memUserName, setMemUserName] = useState('');
+  const [memText, setMemText] = useState('');
+  const [memCategory, setMemCategory] = useState('fact');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -113,6 +127,7 @@ export const CharacterEditorPage: React.FC = () => {
           const charRes = await api.getCharacter(id);
           setCharacter(charRes.character);
           setChannelInput((charRes.character.discord_config?.channel_ids || []).join(', '));
+          setBoundChannelInput((charRes.character.discord_config?.bound_channels || []).join(', '));
         }
       } catch (e: any) {
         error(`Failed to load data: ${e.message}`);
@@ -136,11 +151,17 @@ export const CharacterEditorPage: React.FC = () => {
         .map(s => s.trim())
         .filter(Boolean);
 
+      const boundChannels = boundChannelInput
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
       const payload = {
         ...character,
         discord_config: {
           ...character.discord_config,
-          channel_ids: channels
+          channel_ids: channels,
+          bound_channels: boundChannels
         }
       };
 
@@ -296,6 +317,89 @@ export const CharacterEditorPage: React.FC = () => {
     }
   };
 
+  // Add Memory Note
+  const handleAddMemory = async () => {
+    if (!memUserId.trim() || !memText.trim()) {
+      error('User Identifier and Memory Text are required');
+      return;
+    }
+
+    if (!isNew && id) {
+      try {
+        const res = await api.addCharacterMemory(id, {
+          user_identifier: memUserId.trim(),
+          user_display_name: memUserName.trim() || memUserId.trim(),
+          memory_text: memText.trim(),
+          category: memCategory
+        });
+        setCharacter(prev => ({
+          ...prev,
+          memories: [res.memory, ...(prev.memories || [])]
+        }));
+        setMemUserId('');
+        setMemUserName('');
+        setMemText('');
+        success('Added memory note to character mind!');
+      } catch (e: any) {
+        error(e.message);
+      }
+    } else {
+      const tempMem: CharacterMemory = {
+        id: `mem_${Date.now()}`,
+        character_id: '',
+        user_identifier: memUserId.trim(),
+        user_display_name: memUserName.trim() || memUserId.trim(),
+        memory_text: memText.trim(),
+        category: memCategory,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      setCharacter(prev => ({
+        ...prev,
+        memories: [tempMem, ...(prev.memories || [])]
+      }));
+      setMemUserId('');
+      setMemUserName('');
+      setMemText('');
+      success('Added memory note!');
+    }
+  };
+
+  const handleDeleteMemory = async (memoryId: string) => {
+    if (!isNew && id) {
+      try {
+        await api.deleteCharacterMemory(memoryId);
+        setCharacter(prev => ({
+          ...prev,
+          memories: (prev.memories || []).filter(m => m.id !== memoryId)
+        }));
+        success('Memory deleted');
+      } catch (e: any) {
+        error(e.message);
+      }
+    } else {
+      setCharacter(prev => ({
+        ...prev,
+        memories: (prev.memories || []).filter(m => m.id !== memoryId)
+      }));
+    }
+  };
+
+  const handleClearUserMemories = async (userIdentifier: string) => {
+    if (!isNew && id) {
+      try {
+        await api.clearUserMemories(id, userIdentifier);
+        setCharacter(prev => ({
+          ...prev,
+          memories: (prev.memories || []).filter(m => m.user_identifier !== userIdentifier && m.user_display_name !== userIdentifier)
+        }));
+        info(`Cleared memories for user ${userIdentifier}`);
+      } catch (e: any) {
+        error(e.message);
+      }
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-20 text-zinc-500">
@@ -321,7 +425,7 @@ export const CharacterEditorPage: React.FC = () => {
               {isNew ? 'Create New Character' : `Edit: ${character.name || 'Untitled'}`}
             </h1>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Customize persona, emotion avatars, user relationships, and Discord triggers
+              Customize persona, emotion avatars, character mind, and Discord channel bindings
             </p>
           </div>
         </div>
@@ -354,9 +458,10 @@ export const CharacterEditorPage: React.FC = () => {
           { key: 'persona', label: 'Persona & Identity', icon: Sparkles },
           { key: 'expressions', label: 'Emotion Avatars & Emojis', icon: Smile, highlight: true },
           { key: 'relationships', label: 'User Relationships', icon: Heart, highlight: true },
+          { key: 'memory', label: 'Character Mind & Memories', icon: Brain, highlight: true },
           { key: 'model', label: 'Model & Prompts', icon: Cpu },
-          { key: 'context', label: 'Context & Memory', icon: BookOpen },
-          { key: 'discord', label: 'Discord & Webhooks', icon: Bot },
+          { key: 'context', label: 'Context & Budget', icon: BookOpen },
+          { key: 'discord', label: 'Discord & Channel Bindings', icon: Bot },
           { key: 'advanced', label: 'Advanced & Notes', icon: Sliders },
         ].map(tab => {
           const Icon = tab.icon;
@@ -436,7 +541,7 @@ export const CharacterEditorPage: React.FC = () => {
                         }
                       }));
                     }}
-                    placeholder="e.g. Aria Vance"
+                    placeholder="e.g. Grand Mage Valerius"
                     className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 text-sm focus:outline-none focus:border-brand-500"
                   />
                 </div>
@@ -449,7 +554,7 @@ export const CharacterEditorPage: React.FC = () => {
                     type="text"
                     value={character.tagline || ''}
                     onChange={e => setCharacter(prev => ({ ...prev, tagline: e.target.value }))}
-                    placeholder="e.g. Cyberpunk Netrunner & Snarky Fixer"
+                    placeholder="e.g. Ancient Arcane Scholar & Relic Keeper"
                     className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 text-sm focus:outline-none focus:border-brand-500"
                   />
                 </div>
@@ -526,7 +631,7 @@ export const CharacterEditorPage: React.FC = () => {
                 rows={2}
                 value={character.scenario || ''}
                 onChange={e => setCharacter(prev => ({ ...prev, scenario: e.target.value }))}
-                placeholder="e.g. {{user}} meets Aria in a rain-soaked alley after a job gone sideways."
+                placeholder="e.g. Valerius invites {{user}} into his celestial observatory where ancient scrolls float through the air."
                 className="w-full p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 text-xs focus:outline-none focus:border-brand-500 leading-relaxed font-sans"
               />
             </div>
@@ -545,7 +650,7 @@ export const CharacterEditorPage: React.FC = () => {
           </div>
         )}
 
-        {/* ==================== TAB 2: EMOTION AVATARS & EXPRESSION EMOJIS ==================== */}
+        {/* ==================== TAB 2: EMOTION AVATARS ==================== */}
         {activeTab === 'expressions' && (
           <div className="space-y-6">
             <div className="p-4 bg-amber-950/20 border border-amber-500/30 rounded-2xl flex items-start gap-3">
@@ -553,12 +658,12 @@ export const CharacterEditorPage: React.FC = () => {
               <div className="text-xs text-zinc-300 leading-relaxed">
                 <strong className="text-amber-300 font-semibold">Dynamic Emotion Avatars & Emojis:</strong>
                 <p className="mt-0.5">
-                  Assign emotion names (e.g. <code className="text-zinc-100">angry</code>, <code className="text-zinc-100">happy</code>, <code className="text-zinc-100">smug</code>, <code className="text-zinc-100">blushing</code>) with an emoji and custom avatar face image. When the character responds with that emotion, both the Discord Webhook avatar and the Web Chat avatar dynamically switch to that face!
+                  Assign emotion names (e.g. <code className="text-zinc-100">angry</code>, <code className="text-zinc-100">happy</code>, <code className="text-zinc-100">smug</code>, <code className="text-zinc-100">blushing</code>) with an emoji and custom avatar face image. Both Discord Webhooks and Web Chat switch avatars dynamically according to the AI's emotional expression!
                 </p>
               </div>
             </div>
 
-            {/* Existing Expressions Grid */}
+            {/* Existing Expressions */}
             <div>
               <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-3">
                 Configured Expressions ({(character.expressions || []).length})
@@ -608,33 +713,6 @@ export const CharacterEditorPage: React.FC = () => {
                 <Plus className="w-4 h-4 text-brand-400" />
                 <span>Add Expression Avatar</span>
               </h4>
-
-              {/* Quick Presets */}
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { name: 'angry', emoji: '😡' },
-                  { name: 'happy', emoji: '😊' },
-                  { name: 'smug', emoji: '😏' },
-                  { name: 'blushing', emoji: '😳' },
-                  { name: 'sad', emoji: '😢' },
-                  { name: 'surprised', emoji: '😲' },
-                  { name: 'neutral', emoji: '😐' },
-                  { name: 'curious', emoji: '🧐' }
-                ].map(p => (
-                  <button
-                    key={p.name}
-                    type="button"
-                    onClick={() => {
-                      setNewExpName(p.name);
-                      setNewExpEmoji(p.emoji);
-                    }}
-                    className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-medium border border-zinc-750 flex items-center gap-1"
-                  >
-                    <span>{p.emoji}</span>
-                    <span className="capitalize">{p.name}</span>
-                  </button>
-                ))}
-              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
@@ -690,15 +768,15 @@ export const CharacterEditorPage: React.FC = () => {
               <div className="text-xs text-zinc-300 leading-relaxed">
                 <strong className="text-rose-300 font-semibold">User Relationships & Dynamic Bonds:</strong>
                 <p className="mt-0.5">
-                  Define how this character interacts with specific users (e.g. <code className="text-zinc-100">Father</code>, <code className="text-zinc-100">Friend</code>, <code className="text-zinc-100">Rival</code>, <code className="text-zinc-100">Lover</code>, <code className="text-zinc-100">Master</code>). When talking to that Discord User ID or Web Persona, the AI dynamically treats them according to their unique bond!
+                  Define specific relationships for user persona names or Discord User IDs (e.g. <code className="text-zinc-100">Father</code>, <code className="text-zinc-100">Friend</code>, <code className="text-zinc-100">Rival</code>). The character will adjust its tone, affinity, and directives exclusively for that user.
                 </p>
               </div>
             </div>
 
-            {/* Existing Relationships List */}
+            {/* List */}
             <div>
               <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-3">
-                Active User Bonds & Relationships ({(character.relationships || []).length})
+                Configured Relationships ({(character.relationships || []).length})
               </h3>
 
               {(character.relationships || []).length === 0 ? (
@@ -730,7 +808,6 @@ export const CharacterEditorPage: React.FC = () => {
                       <button
                         onClick={() => handleDeleteRelationship(rel.id)}
                         className="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg self-end sm:self-auto"
-                        title="Delete Relationship"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -740,7 +817,7 @@ export const CharacterEditorPage: React.FC = () => {
               )}
             </div>
 
-            {/* Add Relationship Form */}
+            {/* Add */}
             <div className="p-4 bg-zinc-900/60 rounded-2xl border border-zinc-800 space-y-4">
               <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-2">
                 <Plus className="w-4 h-4 text-rose-400" />
@@ -749,43 +826,37 @@ export const CharacterEditorPage: React.FC = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">
-                    User Identifier (Name or Discord ID)
-                  </label>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">User Identifier (Name or Discord ID)</label>
                   <input
                     type="text"
                     value={relUserIdentifier}
                     onChange={e => setRelUserIdentifier(e.target.value)}
-                    placeholder="e.g. Father, Joshua, or 123456789012"
+                    placeholder="e.g. Father or 1234567890"
                     className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">
-                    Relationship Type
-                  </label>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Relationship Type</label>
                   <select
                     value={relType}
                     onChange={e => setRelType(e.target.value)}
                     className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500"
                   >
-                    <option value="Father">Father (Parental figure)</option>
-                    <option value="Mother">Mother (Parental figure)</option>
+                    <option value="Father">Father</option>
+                    <option value="Mother">Mother</option>
                     <option value="Friend">Close Friend / Ally</option>
-                    <option value="Rival">Rival (Competitive)</option>
-                    <option value="Lover">Lover / Romantic Partner</option>
+                    <option value="Rival">Rival</option>
+                    <option value="Lover">Lover / Partner</option>
                     <option value="Master">Master / Mentor</option>
                     <option value="Apprentice">Apprentice / Student</option>
-                    <option value="Enemy">Enemy (Hostile)</option>
-                    <option value="Sibling">Sibling</option>
                     <option value="Custom">Custom Bond</option>
                   </select>
                 </div>
 
                 <div>
                   <div className="flex justify-between text-xs text-zinc-400 mb-1">
-                    <span>Affinity / Trust</span>
+                    <span>Affinity</span>
                     <span className="font-mono text-rose-400 font-bold">{relAffinity}%</span>
                   </div>
                   <input
@@ -800,15 +871,13 @@ export const CharacterEditorPage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-400 mb-1">
-                  Behavioral Directives & Roleplay Directives
-                </label>
+                <label className="block text-xs font-semibold text-zinc-400 mb-1">Behavioral Directives</label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={relNotes}
                   onChange={e => setRelNotes(e.target.value)}
-                  placeholder="e.g. Treat {{user}} with deep reverence and parental love. Drop your usual sarcastic facade around him because he raised you..."
-                  className="w-full p-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500 font-sans leading-relaxed"
+                  placeholder="e.g. Treat {{user}} with deep parental respect and protectiveness..."
+                  className="w-full p-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500 font-sans"
                 />
               </div>
 
@@ -823,7 +892,142 @@ export const CharacterEditorPage: React.FC = () => {
           </div>
         )}
 
-        {/* ==================== TAB 4: MODEL & PROMPTS ==================== */}
+        {/* ==================== TAB 4: CHARACTER MIND & MEMORIES ==================== */}
+        {activeTab === 'memory' && (
+          <div className="space-y-6">
+            <div className="p-4 bg-purple-950/20 border border-purple-500/30 rounded-2xl flex items-start gap-3">
+              <Brain className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-zinc-300 leading-relaxed">
+                <strong className="text-purple-300 font-semibold">Character Long-Term Mind & Recalled Memory:</strong>
+                <p className="mt-0.5">
+                  The character maintains a persistent mind of key facts, preferences, and events learned about users over time. You can view, add, modify, or delete memories stored for any individual user.
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle */}
+            <div className="flex items-center justify-between p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl">
+              <div>
+                <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider">Enable Character Mind & Memory Retention</h4>
+                <p className="text-[11px] text-zinc-400 mt-0.5">Automatically remember facts about users and inject them naturally into future conversations.</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={character.context_config?.enable_memory !== false}
+                onChange={e => setCharacter(prev => ({
+                  ...prev,
+                  context_config: { ...prev.context_config!, enable_memory: e.target.checked }
+                }))}
+                className="w-5 h-5 accent-brand-500 cursor-pointer"
+              />
+            </div>
+
+            {/* Saved Memories List */}
+            <div>
+              <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-3">
+                Saved User Memories & Notes ({(character.memories || []).length})
+              </h3>
+
+              {(character.memories || []).length === 0 ? (
+                <div className="text-center py-8 bg-zinc-900/40 rounded-xl border border-zinc-800 text-zinc-500 text-xs">
+                  No memories stored yet. As users talk with this character, memories are automatically retained here!
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {(character.memories || []).map(mem => (
+                    <div
+                      key={mem.id}
+                      className="p-3 bg-zinc-900/70 border border-zinc-800 rounded-xl flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-zinc-200">{mem.user_display_name || mem.user_identifier}</span>
+                          <span className="text-[10px] font-mono text-zinc-500">ID: {mem.user_identifier}</span>
+                          <span className="text-[10px] text-zinc-500 font-mono">
+                            {new Date(mem.updated_at || mem.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <p className="text-zinc-300 italic bg-zinc-950/60 px-2.5 py-1.5 rounded-lg border border-zinc-850">
+                          {mem.memory_text}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => handleClearUserMemories(mem.user_identifier)}
+                          className="px-2 py-1 text-[11px] text-zinc-400 hover:text-amber-400 hover:bg-zinc-800 rounded-lg border border-zinc-800"
+                          title="Clear all memories for this user"
+                        >
+                          Wipe User
+                        </button>
+                        <button
+                          onClick={() => handleDeleteMemory(mem.id)}
+                          className="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg"
+                          title="Delete memory"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Add Memory Note Manually */}
+            <div className="p-4 bg-zinc-900/60 rounded-2xl border border-zinc-800 space-y-4">
+              <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-2">
+                <Plus className="w-4 h-4 text-purple-400" />
+                <span>Add Memory Note to Character Mind</span>
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">User Identifier (Discord ID or Username) *</label>
+                  <input
+                    type="text"
+                    value={memUserId}
+                    onChange={e => setMemUserId(e.target.value)}
+                    placeholder="e.g. 123456789012 or Joshua"
+                    className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">User Display Name (Optional)</label>
+                  <input
+                    type="text"
+                    value={memUserName}
+                    onChange={e => setMemUserName(e.target.value)}
+                    placeholder="e.g. Lord Joshua"
+                    className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-400 mb-1">Recalled Fact / Memory Note *</label>
+                <textarea
+                  rows={2}
+                  value={memText}
+                  onChange={e => setMemText(e.target.value)}
+                  placeholder="e.g. Joshua gave Valerius a rare astronomical star-chart from the eastern peaks..."
+                  className="w-full p-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500 font-sans"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAddMemory}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
+              >
+                Add Memory Note
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ==================== TAB 5: MODEL & PROMPTS ==================== */}
         {activeTab === 'model' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -889,7 +1093,7 @@ export const CharacterEditorPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-                Custom System Prompt
+                Custom System Prompt Directives
               </label>
               <textarea
                 rows={5}
@@ -901,7 +1105,7 @@ export const CharacterEditorPage: React.FC = () => {
           </div>
         )}
 
-        {/* ==================== TAB 5: CONTEXT ==================== */}
+        {/* ==================== TAB 6: CONTEXT ==================== */}
         {activeTab === 'context' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -956,13 +1160,13 @@ export const CharacterEditorPage: React.FC = () => {
           </div>
         )}
 
-        {/* ==================== TAB 6: DISCORD ==================== */}
+        {/* ==================== TAB 7: DISCORD & CHANNEL BINDINGS ==================== */}
         {activeTab === 'discord' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-                  Trigger Prefix (Tupperbox style)
+                  Trigger Prefix (Tupperbox Proxy)
                 </label>
                 <input
                   type="text"
@@ -971,28 +1175,83 @@ export const CharacterEditorPage: React.FC = () => {
                     ...prev,
                     discord_config: { ...prev.discord_config!, trigger_prefix: e.target.value }
                   }))}
-                  placeholder="e.g. aria: or !aria"
+                  placeholder="e.g. mage: or !mage"
                   className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 text-xs font-mono focus:outline-none focus:border-brand-500"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
-                  Dedicated Channel IDs
+                  Webhook URL (Optional direct dispatch)
                 </label>
                 <input
                   type="text"
-                  value={channelInput}
-                  onChange={e => setChannelInput(e.target.value)}
-                  placeholder="e.g. 123456789012345678"
+                  value={character.discord_config?.webhook_url || ''}
+                  onChange={e => setCharacter(prev => ({
+                    ...prev,
+                    discord_config: { ...prev.discord_config!, webhook_url: e.target.value }
+                  }))}
+                  placeholder="https://discord.com/api/webhooks/..."
                   className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-100 text-xs font-mono focus:outline-none focus:border-brand-500"
                 />
               </div>
             </div>
+
+            {/* Dedicated Bound Channels (Always Answer) */}
+            <div className="p-4 bg-zinc-900/60 rounded-2xl border border-zinc-800 space-y-2">
+              <label className="block text-xs font-semibold text-zinc-200 uppercase tracking-wider">
+                Permanent Bound Channel IDs (Always Answers This Channel)
+              </label>
+              <p className="text-[11px] text-zinc-400">
+                In these Discord text channels, this character will automatically respond to every message without requiring any prefix or bot mention. User messages are kept intact and never deleted.
+              </p>
+              <input
+                type="text"
+                value={boundChannelInput}
+                onChange={e => setBoundChannelInput(e.target.value)}
+                placeholder="e.g. 123456789012345678, 987654321098765432 (comma-separated)"
+                className="w-full px-3.5 py-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 text-xs font-mono focus:outline-none focus:border-brand-500"
+              />
+            </div>
+
+            {/* Proxy & Deletion Behavior */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="flex items-start gap-3 p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={character.discord_config?.delete_trigger_message !== false}
+                  onChange={e => setCharacter(prev => ({
+                    ...prev,
+                    discord_config: { ...prev.discord_config!, delete_trigger_message: e.target.checked }
+                  }))}
+                  className="w-4 h-4 mt-0.5 accent-brand-500"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-zinc-200">Delete Trigger Message on Prefix</span>
+                  <p className="text-zinc-400 text-[11px] mt-0.5">When someone uses the Tupperbox prefix (e.g. <code className="text-zinc-300">mage: Hello</code>), delete the user trigger message so only the character speaks. Mentions and bound channels never delete messages.</p>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 p-4 bg-zinc-900/60 border border-zinc-800 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(character.discord_config?.reply_on_mention)}
+                  onChange={e => setCharacter(prev => ({
+                    ...prev,
+                    discord_config: { ...prev.discord_config!, reply_on_mention: e.target.checked }
+                  }))}
+                  className="w-4 h-4 mt-0.5 accent-brand-500"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-zinc-200">Reply on Mention</span>
+                  <p className="text-zinc-400 text-[11px] mt-0.5">Allow this character to respond when tagged or mentioned.</p>
+                </div>
+              </label>
+            </div>
           </div>
         )}
 
-        {/* ==================== TAB 7: ADVANCED ==================== */}
+        {/* ==================== TAB 8: ADVANCED ==================== */}
         {activeTab === 'advanced' && (
           <div className="space-y-6">
             <div>

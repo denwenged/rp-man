@@ -12,10 +12,12 @@ import {
   ActivityType
 } from 'discord.js';
 import axios from 'axios';
+import crypto from 'crypto';
 import { db } from '../db';
 import { logger } from './loggerService';
 import { llmService } from './llmService';
 import { Character, DiscordBotConfig, DiscordStatus } from '../../shared/types';
+import { ContextManager } from './contextManager';
 
 class DiscordService {
   private client: Client | null = null;
@@ -231,14 +233,35 @@ class DiscordService {
           option.setName('turns').setDescription('Number of exchange turns (1-4)').setRequired(false)
         ),
       new SlashCommandBuilder()
-        .setName('characters')
-        .setDescription('List all available RP characters and their trigger prefixes'),
+        .setName('nickname')
+        .setDescription('Set or check your roleplay persona nickname so characters address you properly')
+        .addSubcommand(sub =>
+          sub
+            .setName('set')
+            .setDescription('Set your preferred roleplay nickname')
+            .addStringOption(opt => opt.setName('name').setDescription('Your persona name (e.g. Lord Joshua, Elena)').setRequired(true))
+        )
+        .addSubcommand(sub =>
+          sub.setName('view').setDescription('View your current roleplay nickname')
+        )
+        .addSubcommand(sub =>
+          sub.setName('clear').setDescription('Clear your custom nickname and use your Discord server name')
+        ),
       new SlashCommandBuilder()
         .setName('reset')
-        .setDescription('Reset the context memory for this channel or a character')
+        .setDescription('Reset your personal conversation context with a character')
         .addStringOption(option =>
-          option.setName('character').setDescription('Optional specific character').setRequired(false)
+          option.setName('character').setDescription('Character name (leave blank to reset all in this channel)').setRequired(false)
         ),
+      new SlashCommandBuilder()
+        .setName('forgetme')
+        .setDescription('Wipe long-term memories and context this character has stored about you')
+        .addStringOption(option =>
+          option.setName('character').setDescription('Character name').setRequired(false)
+        ),
+      new SlashCommandBuilder()
+        .setName('characters')
+        .setDescription('List all available RP characters, bound channels, and triggers'),
       new SlashCommandBuilder()
         .setName('status')
         .setDescription('Check server and Ollama status')
@@ -261,20 +284,44 @@ class DiscordService {
     if (!content) return;
 
     const userId = message.author.id;
+    const channelId = message.channelId;
     const now = Date.now();
     const lastTime = this.lastUserMessageTime.get(userId) || 0;
     const cooldownMs = (config.rate_limit_per_user_sec || 2) * 1000;
     if (now - lastTime < cooldownMs) return;
     this.lastUserMessageTime.set(userId, now);
 
+    // Check for quick prefix commands e.g. !nick or !reset
+    if (content.startsWith('!nick ') || content.startsWith('!nickname ')) {
+      const newNick = content.replace(/^!(?:nick|nickname)\s+/, '').trim();
+      if (newNick) {
+        this.setUserNickname(userId, newNick);
+        await message.reply({ content: `✨ Your roleplay name is now set to **${newNick}**! All characters will address you by this name.` });
+        return;
+      }
+    }
+
+    if (content === '!reset' || content.startsWith('!reset ')) {
+      const charQuery = content.replace(/^!reset\s*/, '').trim().toLowerCase();
+      this.resetUserContext(channelId, userId, charQuery);
+      await message.reply({ content: `🧹 Reset your personal conversation context in this channel. Other users are unaffected!` });
+      return;
+    }
+
     const characters = this.getAllCharacters();
     if (characters.length === 0) return;
 
     let targetChar: Character | null = null;
     let cleanUserMessage = content;
-    let shouldProxyTupper = false;
+    let shouldDeleteTrigger = false;
 
-    // Check Trigger Prefixes & Suffixes
+    // 1. Check for Channel Bindings (Character assigned to this text chat)
+    const boundChar = characters.find(c => {
+      const bound = c.discord_config?.bound_channels || c.discord_config?.channel_ids || [];
+      return bound.includes(channelId);
+    });
+
+    // 2. Check Trigger Prefixes & Suffixes
     for (const char of characters) {
       const prefix = char.discord_config?.trigger_prefix?.trim().toLowerCase();
       const suffix = char.discord_config?.trigger_suffix?.trim().toLowerCase();
@@ -282,23 +329,27 @@ class DiscordService {
       if (prefix && content.toLowerCase().startsWith(prefix)) {
         targetChar = char;
         cleanUserMessage = content.slice(prefix.length).trim();
-        shouldProxyTupper = Boolean(char.discord_config?.tupperbox_proxy);
+        // Only delete if tupperbox_proxy is on AND delete_trigger_message is not explicitly disabled
+        shouldDeleteTrigger = Boolean(char.discord_config?.tupperbox_proxy && char.discord_config?.delete_trigger_message !== false);
         break;
       }
 
       if (suffix && content.toLowerCase().endsWith(suffix)) {
         targetChar = char;
         cleanUserMessage = content.slice(0, -suffix.length).trim();
-        shouldProxyTupper = Boolean(char.discord_config?.tupperbox_proxy);
-        break;
-      }
-
-      if (char.discord_config?.channel_ids && char.discord_config.channel_ids.includes(message.channelId)) {
-        targetChar = char;
+        shouldDeleteTrigger = Boolean(char.discord_config?.tupperbox_proxy && char.discord_config?.delete_trigger_message !== false);
         break;
       }
     }
 
+    // 3. If no prefix trigger, check if channel is bound to a specific character
+    if (!targetChar && boundChar) {
+      targetChar = boundChar;
+      cleanUserMessage = content;
+      shouldDeleteTrigger = false; // NEVER delete messages in bound channels!
+    }
+
+    // 4. Check Bot Mention (@Bot or @Character)
     const botMention = `<@${this.client?.user?.id}>`;
     const botMentionNick = `<@!${this.client?.user?.id}>`;
 
@@ -306,24 +357,28 @@ class DiscordService {
       if (content.startsWith(botMention) || content.startsWith(botMentionNick)) {
         cleanUserMessage = content.replace(botMention, '').replace(botMentionNick, '').trim();
         targetChar = characters.find(c => c.id === config.default_character_id) || characters[0];
+        shouldDeleteTrigger = false; // NEVER delete message when mentioning!
       } else if (message.channel.isDMBased?.() && config.allow_dm) {
         targetChar = characters.find(c => c.id === config.default_character_id) || characters[0];
+        shouldDeleteTrigger = false;
       }
     }
 
     if (!targetChar) return;
     if (!cleanUserMessage) cleanUserMessage = '*looks over attentively*';
 
-    if (shouldProxyTupper && message.guild && message.deletable) {
+    // Delete trigger message ONLY if explicitly a Tupperbox prefix proxy
+    if (shouldDeleteTrigger && message.guild && message.deletable) {
       try {
         await message.delete();
       } catch (e) {}
     }
 
-    const userName = message.member?.displayName || message.author.username;
-    const channelId = message.channelId;
+    // Resolve user's preferred persona nickname
+    const rawDiscordName = message.member?.displayName || message.author.globalName || message.author.username;
+    const userName = ContextManager.getUserPreferredName(userId, rawDiscordName);
 
-    logger.info('DISCORD', `Triggered [${targetChar.name}] in #${message.channel?.name || 'DM'} by ${userName} (${userId})`);
+    logger.info('DISCORD', `[${targetChar.name}] answering ${userName} (${userId}) in #${message.channel?.name || 'DM'}`);
 
     if (config.typing_indicator && message.channel?.sendTyping) {
       try {
@@ -331,7 +386,8 @@ class DiscordService {
       } catch (e) {}
     }
 
-    const contextKey = `${channelId}_${targetChar.id}`;
+    // Isolate context per User + Channel + Character so conversations don't bleed between users!
+    const contextKey = `${channelId}_${userId}_${targetChar.id}`;
     const history = this.loadDiscordHistory(contextKey);
 
     history.push({ role: 'user', content: cleanUserMessage });
@@ -352,6 +408,11 @@ class DiscordService {
       this.saveDiscordHistory(contextKey, channelId, userId, targetChar.id, history.slice(-20));
 
       await this.deliverCharacterResponse(message.channel, targetChar, replyText, message, avatarToUse);
+
+      // Async Memory formation if Character Mind is enabled
+      if (targetChar.context_config?.enable_memory !== false) {
+        this.extractAndSaveMemoryAsync(targetChar.id, userId, userName, cleanUserMessage, replyText);
+      }
     } catch (err: any) {
       logger.error('DISCORD', `Failed response for ${targetChar.name}: ${err.message}`);
     }
@@ -371,14 +432,88 @@ class DiscordService {
 
     if (commandName === 'characters') {
       const characters = this.getAllCharacters();
-      const list = characters.map(c => `• **${c.name}** — Trigger: \`${c.discord_config?.trigger_prefix || '(none)'}\``).join('\n');
+      const list = characters.map(c => {
+        const bound = (c.discord_config?.bound_channels || []).length > 0
+          ? ` (Bound to ${c.discord_config.bound_channels.length} channel(s))`
+          : '';
+        return `• **${c.name}** — Trigger: \`${c.discord_config?.trigger_prefix || '(none)'}\`${bound}`;
+      }).join('\n');
       await interaction.reply({ content: `🎭 **Available RP Characters**:\n\n${list}` });
       return;
     }
 
+    if (commandName === 'nickname') {
+      const sub = interaction.options.getSubcommand();
+      const userId = interaction.user.id;
+
+      if (sub === 'set') {
+        const preferredName = interaction.options.getString('name', true).trim();
+        this.setUserNickname(userId, preferredName);
+        await interaction.reply({
+          content: `✅ Your roleplay persona name is now set to **${preferredName}**! Characters will address you as **${preferredName}**.`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (sub === 'view') {
+        const rawDiscordName = interaction.member?.displayName || interaction.user.username;
+        const currentNick = ContextManager.getUserPreferredName(userId, rawDiscordName);
+        await interaction.reply({
+          content: `👤 Your current roleplay nickname is: **${currentNick}**`,
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (sub === 'clear') {
+        db.prepare('DELETE FROM user_personas WHERE user_identifier = ?').run(userId);
+        const serverName = interaction.member?.displayName || interaction.user.username;
+        await interaction.reply({
+          content: `🔄 Reset your nickname. Characters will now address you by your server name (**${serverName}**).`,
+          ephemeral: true
+        });
+        return;
+      }
+    }
+
     if (commandName === 'reset') {
-      db.prepare('DELETE FROM discord_chat_contexts WHERE channel_id = ?').run(interaction.channelId);
-      await interaction.reply({ content: `🧹 Context memory reset!`, ephemeral: true });
+      const userId = interaction.user.id;
+      const channelId = interaction.channelId;
+      const charQuery = interaction.options.getString('character')?.toLowerCase().trim() || '';
+
+      this.resetUserContext(channelId, userId, charQuery);
+      await interaction.reply({
+        content: `🧹 Reset your personal conversation context in this channel. Other users' conversations are untouched!`,
+        ephemeral: true
+      });
+      return;
+    }
+
+    if (commandName === 'forgetme') {
+      const userId = interaction.user.id;
+      const charQuery = interaction.options.getString('character')?.toLowerCase().trim() || '';
+
+      if (charQuery) {
+        const characters = this.getAllCharacters();
+        const matched = characters.find(c => c.name.toLowerCase().includes(charQuery) || c.id === charQuery);
+        if (matched) {
+          db.prepare('DELETE FROM character_memories WHERE character_id = ? AND user_identifier = ?').run(matched.id, userId);
+          db.prepare('DELETE FROM discord_chat_contexts WHERE discord_user_id = ? AND character_id = ?').run(userId, matched.id);
+          await interaction.reply({
+            content: `🧠 **${matched.name}** has forgotten all stored memories and history about you!`,
+            ephemeral: true
+          });
+          return;
+        }
+      }
+
+      db.prepare('DELETE FROM character_memories WHERE user_identifier = ?').run(userId);
+      db.prepare('DELETE FROM discord_chat_contexts WHERE discord_user_id = ?').run(userId);
+      await interaction.reply({
+        content: `🧠 All characters have wiped their stored memory notes and conversation histories about you!`,
+        ephemeral: true
+      });
       return;
     }
 
@@ -449,8 +584,9 @@ class DiscordService {
         return;
       }
 
-      const userName = interaction.member?.displayName || interaction.user.username;
-      const contextKey = `${interaction.channelId}_${targetChar.id}`;
+      const rawName = interaction.member?.displayName || interaction.user.username;
+      const userName = ContextManager.getUserPreferredName(interaction.user.id, rawName);
+      const contextKey = `${interaction.channelId}_${interaction.user.id}_${targetChar.id}`;
       const history = this.loadDiscordHistory(contextKey);
 
       history.push({ role: 'user', content: userMessage });
@@ -469,10 +605,91 @@ class DiscordService {
         this.saveDiscordHistory(contextKey, interaction.channelId, interaction.user.id, targetChar.id, history.slice(-20));
 
         await interaction.editReply(`**${targetChar.name}**: ${replyText}`);
+
+        if (targetChar.context_config?.enable_memory !== false) {
+          this.extractAndSaveMemoryAsync(targetChar.id, interaction.user.id, userName, userMessage, replyText);
+        }
       } catch (err: any) {
         await interaction.editReply(`⚠️ *[Error: ${err.message}]*`);
       }
     }
+  }
+
+  public setUserNickname(userId: string, preferredName: string) {
+    const id = `persona_${userId}`;
+    const now = new Date().toISOString();
+    try {
+      db.prepare(`
+        INSERT INTO user_personas (id, user_identifier, preferred_name, notes, created_at, updated_at)
+        VALUES (?, ?, ?, '', ?, ?)
+        ON CONFLICT(user_identifier) DO UPDATE SET preferred_name = excluded.preferred_name, updated_at = excluded.updated_at
+      `).run(id, userId, preferredName.trim(), now, now);
+      logger.info('DISCORD', `Set preferred nickname for ${userId}: ${preferredName}`);
+    } catch (e: any) {
+      logger.error('DISCORD', `Failed to set nickname: ${e.message}`);
+    }
+  }
+
+  public resetUserContext(channelId: string, userId: string, characterQuery?: string) {
+    try {
+      if (characterQuery) {
+        const chars = this.getAllCharacters();
+        const matched = chars.find(c => c.name.toLowerCase().includes(characterQuery) || c.id === characterQuery);
+        if (matched) {
+          const key = `${channelId}_${userId}_${matched.id}`;
+          db.prepare('DELETE FROM discord_chat_contexts WHERE id = ?').run(key);
+          return;
+        }
+      }
+      db.prepare('DELETE FROM discord_chat_contexts WHERE channel_id = ? AND discord_user_id = ?').run(channelId, userId);
+    } catch (e: any) {
+      logger.error('DISCORD', `Failed to reset context: ${e.message}`);
+    }
+  }
+
+  /**
+   * Asynchronously saves key memory bits about the user
+   */
+  private async extractAndSaveMemoryAsync(
+    characterId: string,
+    userIdentifier: string,
+    userDisplayName: string,
+    userMessage: string,
+    assistantReply: string
+  ) {
+    // Basic heuristic or key statement retention
+    if (!userMessage || userMessage.length < 10) return;
+
+    // Check if user stated a preference, name, item, or background fact
+    const factMatch = userMessage.match(/\b(i am|i'm|my name is|i like|i love|i hate|i have|i brought|i work as|i live in)\b/i);
+    if (!factMatch) return;
+
+    try {
+      // Keep only up to 15 memories per user/character
+      const count = (db.prepare('SELECT COUNT(*) as c FROM character_memories WHERE character_id = ? AND user_identifier = ?').get(characterId, userIdentifier) as any).c;
+      if (count >= 15) {
+        // Delete oldest memory
+        db.prepare(`
+          DELETE FROM character_memories 
+          WHERE id IN (
+            SELECT id FROM character_memories 
+            WHERE character_id = ? AND user_identifier = ? 
+            ORDER BY created_at ASC LIMIT 1
+          )
+        `).run(characterId, userIdentifier);
+      }
+
+      const id = `mem_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+      const now = new Date().toISOString();
+      const memorySnippet = `${userDisplayName}: "${userMessage.substring(0, 140)}"`;
+
+      db.prepare(`
+        INSERT INTO character_memories (id, character_id, user_identifier, user_display_name, memory_text, category, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'fact', ?, ?)
+      `).run(id, characterId, userIdentifier, userDisplayName, memorySnippet, now, now);
+
+      logger.info('LLM', `Recalled memory saved for [${characterId}] about ${userDisplayName}: ${memorySnippet}`);
+    } catch (e) {}
   }
 
   private async deliverCharacterResponse(

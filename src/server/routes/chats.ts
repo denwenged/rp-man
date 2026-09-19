@@ -19,6 +19,7 @@ function getCharacter(id: string): Character | null {
     is_public: Boolean(row.is_public),
     alternate_greetings: JSON.parse(row.alternate_greetings || '[]'),
     tags: JSON.parse(row.tags || '[]'),
+    expressions: JSON.parse(row.expressions || '[]'),
     model_config: JSON.parse(row.model_config || '{}'),
     discord_config: JSON.parse(row.discord_config || '{}'),
     context_config: JSON.parse(row.context_config || '{}')

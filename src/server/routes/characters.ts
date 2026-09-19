@@ -4,7 +4,7 @@ import multer from 'multer';
 import { db } from '../db';
 import { authMiddleware, requireEditorOrAdmin, AuthenticatedRequest } from '../middleware/auth';
 import { logger } from '../services/loggerService';
-import { Character, UserRelationship } from '../../shared/types';
+import { Character, UserRelationship, CharacterMemory } from '../../shared/types';
 import { CardImportExport } from '../services/cardImportExport';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -15,6 +15,7 @@ charactersRouter.use(authMiddleware);
 
 function formatCharacter(row: any): Character {
   const rels = db.prepare('SELECT * FROM user_relationships WHERE character_id = ? ORDER BY created_at ASC').all(row.id) as UserRelationship[];
+  const mems = db.prepare('SELECT * FROM character_memories WHERE character_id = ? ORDER BY updated_at DESC LIMIT 30').all(row.id) as CharacterMemory[];
 
   return {
     ...row,
@@ -23,6 +24,7 @@ function formatCharacter(row: any): Character {
     tags: JSON.parse(row.tags || '[]'),
     expressions: JSON.parse(row.expressions || '[]'),
     relationships: rels || [],
+    memories: mems || [],
     model_config: JSON.parse(row.model_config || '{}'),
     discord_config: JSON.parse(row.discord_config || '{}'),
     context_config: JSON.parse(row.context_config || '{}')
@@ -464,6 +466,87 @@ charactersRouter.delete('/relationships/:relId', requireEditorOrAdmin, (req: Aut
   try {
     db.prepare('DELETE FROM user_relationships WHERE id = ?').run(relId);
     return res.json({ success: true, message: 'Relationship deleted' });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ================= CHARACTER MEMORIES & MIND CRUD =================
+// List memories stored by character
+charactersRouter.get('/:id/memories', (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const rows = db.prepare('SELECT * FROM character_memories WHERE character_id = ? ORDER BY updated_at DESC').all(id);
+    return res.json({ memories: rows });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Add memory note manually (Editor or Admin only)
+charactersRouter.post('/:id/memories', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const { id: character_id } = req.params;
+  const { user_identifier, user_display_name = '', memory_text, category = 'fact' } = req.body;
+  if (!user_identifier || !memory_text) {
+    return res.status(400).json({ error: 'user_identifier and memory_text are required' });
+  }
+
+  const id = `mem_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+  const now = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      INSERT INTO character_memories (id, character_id, user_identifier, user_display_name, memory_text, category, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, character_id, user_identifier.trim(), user_display_name.trim(), memory_text.trim(), category, now, now);
+
+    const created = db.prepare('SELECT * FROM character_memories WHERE id = ?').get(id);
+    return res.status(201).json({ memory: created });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Update memory note (Editor or Admin only)
+charactersRouter.put('/memories/:memoryId', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const { memoryId } = req.params;
+  const { memory_text, user_display_name, category } = req.body;
+  const now = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      UPDATE character_memories SET
+        memory_text = COALESCE(?, memory_text),
+        user_display_name = COALESCE(?, user_display_name),
+        category = COALESCE(?, category),
+        updated_at = ?
+      WHERE id = ?
+    `).run(memory_text, user_display_name, category, now, memoryId);
+
+    const updated = db.prepare('SELECT * FROM character_memories WHERE id = ?').get(memoryId);
+    return res.json({ memory: updated });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Delete memory note (Editor or Admin only)
+charactersRouter.delete('/memories/:memoryId', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const { memoryId } = req.params;
+  try {
+    db.prepare('DELETE FROM character_memories WHERE id = ?').run(memoryId);
+    return res.json({ success: true, message: 'Memory deleted' });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Clear single user's memories for character (Editor or Admin only)
+charactersRouter.delete('/:id/memories/user/:userId', requireEditorOrAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const { id: character_id, userId } = req.params;
+  try {
+    db.prepare('DELETE FROM character_memories WHERE character_id = ? AND (user_identifier = ? OR LOWER(user_display_name) = LOWER(?))').run(character_id, userId, userId);
+    return res.json({ success: true, message: 'User memories cleared' });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
   }

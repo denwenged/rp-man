@@ -63,6 +63,26 @@ export function initDatabase() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS character_memories (
+      id TEXT PRIMARY KEY,
+      character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
+      user_identifier TEXT NOT NULL,
+      user_display_name TEXT DEFAULT '',
+      memory_text TEXT NOT NULL,
+      category TEXT DEFAULT 'fact',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_personas (
+      id TEXT PRIMARY KEY,
+      user_identifier TEXT UNIQUE NOT NULL,
+      preferred_name TEXT NOT NULL,
+      notes TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id TEXT PRIMARY KEY,
       character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
@@ -187,6 +207,8 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_characters_user ON characters(user_id);
     CREATE INDEX IF NOT EXISTS idx_relationships_char ON user_relationships(character_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_char ON character_memories(character_id, user_identifier);
+    CREATE INDEX IF NOT EXISTS idx_personas_user ON user_personas(user_identifier);
     CREATE INDEX IF NOT EXISTS idx_group_messages_grp ON group_messages(group_id);
     CREATE INDEX IF NOT EXISTS idx_lore_entries_book ON lore_entries(lorebook_id);
     CREATE INDEX IF NOT EXISTS idx_discord_ctx ON discord_chat_contexts(channel_id, character_id);
@@ -435,14 +457,17 @@ Never break character or speak as an AI model. Write natural responses in standa
           trigger_suffix: '',
           webhook_url: '',
           channel_ids: [],
+          bound_channels: [],
           auto_react: true,
           reply_on_mention: true,
-          tupperbox_proxy: true
+          tupperbox_proxy: true,
+          delete_trigger_message: true
         }),
         context_config: JSON.stringify({
           max_context_tokens: 4096,
           max_history_messages: 16,
           enable_summary: true,
+          enable_memory: true,
           summary_token_threshold: 3000,
           lorebook_ids: [defaultLorebookId]
         })
@@ -488,14 +513,17 @@ Always stay in character. Use asterisk notation for actions *like this* and quot
           trigger_suffix: '',
           webhook_url: '',
           channel_ids: [],
+          bound_channels: [],
           auto_react: false,
           reply_on_mention: true,
-          tupperbox_proxy: true
+          tupperbox_proxy: true,
+          delete_trigger_message: true
         }),
         context_config: JSON.stringify({
           max_context_tokens: 4096,
           max_history_messages: 16,
           enable_summary: true,
+          enable_memory: true,
           summary_token_threshold: 3000,
           lorebook_ids: [defaultLorebookId]
         })
@@ -540,14 +568,17 @@ Stay strictly in character. Actions in asterisks *like this*, speech in quotes "
           trigger_suffix: '',
           webhook_url: '',
           channel_ids: [],
+          bound_channels: [],
           auto_react: true,
           reply_on_mention: true,
-          tupperbox_proxy: true
+          tupperbox_proxy: true,
+          delete_trigger_message: true
         }),
         context_config: JSON.stringify({
           max_context_tokens: 3072,
           max_history_messages: 14,
           enable_summary: true,
+          enable_memory: true,
           summary_token_threshold: 2500,
           lorebook_ids: []
         })
