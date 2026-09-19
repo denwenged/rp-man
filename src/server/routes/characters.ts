@@ -4,7 +4,7 @@ import multer from 'multer';
 import { db } from '../db';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth';
 import { logger } from '../services/loggerService';
-import { Character } from '../../shared/types';
+import { Character, UserRelationship } from '../../shared/types';
 import { CardImportExport } from '../services/cardImportExport';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -14,11 +14,15 @@ export const charactersRouter = Router();
 charactersRouter.use(authMiddleware);
 
 function formatCharacter(row: any): Character {
+  const rels = db.prepare('SELECT * FROM user_relationships WHERE character_id = ? ORDER BY created_at ASC').all(row.id) as UserRelationship[];
+
   return {
     ...row,
     is_public: Boolean(row.is_public),
     alternate_greetings: JSON.parse(row.alternate_greetings || '[]'),
     tags: JSON.parse(row.tags || '[]'),
+    expressions: JSON.parse(row.expressions || '[]'),
+    relationships: rels || [],
     model_config: JSON.parse(row.model_config || '{}'),
     discord_config: JSON.parse(row.discord_config || '{}'),
     context_config: JSON.parse(row.context_config || '{}')
@@ -60,9 +64,7 @@ charactersRouter.get('/:id', (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   try {
     const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(id);
-    if (!row) {
-      return res.status(404).json({ error: 'Character not found' });
-    }
+    if (!row) return res.status(404).json({ error: 'Character not found' });
     return res.json({ character: formatCharacter(row) });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
@@ -89,6 +91,7 @@ charactersRouter.post('/', (req: AuthenticatedRequest, res: Response) => {
     post_history_instructions = '',
     creator_notes = '',
     tags = [],
+    expressions = [],
     is_public = true,
     model_config = {},
     discord_config = {},
@@ -100,12 +103,12 @@ charactersRouter.post('/', (req: AuthenticatedRequest, res: Response) => {
       INSERT INTO characters (
         id, name, avatar_url, tagline, description, personality, scenario,
         first_mes, alternate_greetings, mes_example, system_prompt, post_history_instructions,
-        creator_notes, tags, user_id, is_public, model_config, discord_config, context_config,
+        creator_notes, tags, expressions, user_id, is_public, model_config, discord_config, context_config,
         created_at, updated_at
       ) VALUES (
         @id, @name, @avatar_url, @tagline, @description, @personality, @scenario,
         @first_mes, @alternate_greetings, @mes_example, @system_prompt, @post_history_instructions,
-        @creator_notes, @tags, @user_id, @is_public, @model_config, @discord_config, @context_config,
+        @creator_notes, @tags, @expressions, @user_id, @is_public, @model_config, @discord_config, @context_config,
         @created_at, @updated_at
       )
     `);
@@ -125,6 +128,7 @@ charactersRouter.post('/', (req: AuthenticatedRequest, res: Response) => {
       post_history_instructions,
       creator_notes,
       tags: JSON.stringify(tags),
+      expressions: JSON.stringify(expressions),
       user_id: userId,
       is_public: is_public ? 1 : 0,
       model_config: JSON.stringify(model_config),
@@ -138,7 +142,6 @@ charactersRouter.post('/', (req: AuthenticatedRequest, res: Response) => {
     logger.info('SYSTEM', `User ${req.user!.username} created character "${name}" (${id})`);
     return res.status(201).json({ character: formatCharacter(created) });
   } catch (e: any) {
-    logger.error('SYSTEM', `Error creating character: ${e.message}`);
     return res.status(500).json({ error: e.message });
   }
 });
@@ -152,9 +155,7 @@ charactersRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
 
   try {
     const existing = db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as any;
-    if (!existing) {
-      return res.status(404).json({ error: 'Character not found' });
-    }
+    if (!existing) return res.status(404).json({ error: 'Character not found' });
 
     if (!isAdmin && existing.user_id !== userId) {
       return res.status(403).json({ error: 'Permission denied to edit this character' });
@@ -174,6 +175,7 @@ charactersRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
       post_history_instructions = existing.post_history_instructions,
       creator_notes = existing.creator_notes,
       tags = JSON.parse(existing.tags || '[]'),
+      expressions = JSON.parse(existing.expressions || '[]'),
       is_public = Boolean(existing.is_public),
       model_config = JSON.parse(existing.model_config || '{}'),
       discord_config = JSON.parse(existing.discord_config || '{}'),
@@ -195,6 +197,7 @@ charactersRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
         post_history_instructions = @post_history_instructions,
         creator_notes = @creator_notes,
         tags = @tags,
+        expressions = @expressions,
         is_public = @is_public,
         model_config = @model_config,
         discord_config = @discord_config,
@@ -218,6 +221,7 @@ charactersRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
       post_history_instructions,
       creator_notes,
       tags: JSON.stringify(tags),
+      expressions: JSON.stringify(expressions),
       is_public: is_public ? 1 : 0,
       model_config: JSON.stringify(model_config),
       discord_config: JSON.stringify(discord_config),
@@ -226,7 +230,6 @@ charactersRouter.put('/:id', (req: AuthenticatedRequest, res: Response) => {
     });
 
     const updated = db.prepare('SELECT * FROM characters WHERE id = ?').get(id);
-    logger.info('SYSTEM', `Updated character "${name}" (${id})`);
     return res.json({ character: formatCharacter(updated) });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
@@ -241,16 +244,10 @@ charactersRouter.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
 
   try {
     const existing = db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as any;
-    if (!existing) {
-      return res.status(404).json({ error: 'Character not found' });
-    }
-
-    if (!isAdmin && existing.user_id !== userId) {
-      return res.status(403).json({ error: 'Permission denied to delete this character' });
-    }
+    if (!existing) return res.status(404).json({ error: 'Character not found' });
+    if (!isAdmin && existing.user_id !== userId) return res.status(403).json({ error: 'Permission denied' });
 
     db.prepare('DELETE FROM characters WHERE id = ?').run(id);
-    logger.info('SYSTEM', `Deleted character "${existing.name}" (${id})`);
     return res.json({ success: true, message: 'Character deleted' });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
@@ -266,9 +263,7 @@ charactersRouter.post('/:id/duplicate', (req: AuthenticatedRequest, res: Respons
 
   try {
     const char = db.prepare('SELECT * FROM characters WHERE id = ?').get(id) as any;
-    if (!char) {
-      return res.status(404).json({ error: 'Source character not found' });
-    }
+    if (!char) return res.status(404).json({ error: 'Source character not found' });
 
     const newName = `${char.name} (Copy)`;
     const newPrefix = `${char.name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5)}2:`;
@@ -279,12 +274,12 @@ charactersRouter.post('/:id/duplicate', (req: AuthenticatedRequest, res: Respons
       INSERT INTO characters (
         id, name, avatar_url, tagline, description, personality, scenario,
         first_mes, alternate_greetings, mes_example, system_prompt, post_history_instructions,
-        creator_notes, tags, user_id, is_public, model_config, discord_config, context_config,
+        creator_notes, tags, expressions, user_id, is_public, model_config, discord_config, context_config,
         created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?
       )
     `).run(
@@ -302,6 +297,7 @@ charactersRouter.post('/:id/duplicate', (req: AuthenticatedRequest, res: Respons
       char.post_history_instructions,
       char.creator_notes,
       char.tags,
+      char.expressions || '[]',
       userId,
       char.is_public,
       char.model_config,
@@ -323,9 +319,7 @@ charactersRouter.get('/:id/export', (req: AuthenticatedRequest, res: Response) =
   const { id } = req.params;
   try {
     const row = db.prepare('SELECT * FROM characters WHERE id = ?').get(id);
-    if (!row) {
-      return res.status(404).json({ error: 'Character not found' });
-    }
+    if (!row) return res.status(404).json({ error: 'Character not found' });
     const char = formatCharacter(row);
     const tavernCard = CardImportExport.exportToTavernV2(char);
 
@@ -345,18 +339,13 @@ charactersRouter.post('/import', upload.single('file'), (req: AuthenticatedReque
 
   try {
     let rawData: any = null;
-
     if (req.file) {
       const isPng = req.file.mimetype.includes('png') || req.file.originalname.toLowerCase().endsWith('.png');
       if (isPng) {
         rawData = CardImportExport.extractJsonFromPng(req.file.buffer);
-        if (!rawData) {
-          return res.status(400).json({ error: 'No embedded character card data found in PNG image' });
-        }
+        if (!rawData) return res.status(400).json({ error: 'No embedded character card data found in PNG image' });
       } else {
-        // Parse JSON file
-        const text = req.file.buffer.toString('utf-8');
-        rawData = JSON.parse(text);
+        rawData = JSON.parse(req.file.buffer.toString('utf-8'));
       }
     } else if (req.body && req.body.json_data) {
       rawData = typeof req.body.json_data === 'string' ? JSON.parse(req.body.json_data) : req.body.json_data;
@@ -370,12 +359,12 @@ charactersRouter.post('/import', upload.single('file'), (req: AuthenticatedReque
       INSERT INTO characters (
         id, name, avatar_url, tagline, description, personality, scenario,
         first_mes, alternate_greetings, mes_example, system_prompt, post_history_instructions,
-        creator_notes, tags, user_id, is_public, model_config, discord_config, context_config,
+        creator_notes, tags, expressions, user_id, is_public, model_config, discord_config, context_config,
         created_at, updated_at
       ) VALUES (
         @id, @name, @avatar_url, @tagline, @description, @personality, @scenario,
         @first_mes, @alternate_greetings, @mes_example, @system_prompt, @post_history_instructions,
-        @creator_notes, @tags, @user_id, @is_public, @model_config, @discord_config, @context_config,
+        @creator_notes, @tags, '[]', @user_id, @is_public, @model_config, @discord_config, @context_config,
         @created_at, @updated_at
       )
     `).run({
@@ -403,10 +392,79 @@ charactersRouter.post('/import', upload.single('file'), (req: AuthenticatedReque
     });
 
     const created = db.prepare('SELECT * FROM characters WHERE id = ?').get(id);
-    logger.info('SYSTEM', `Imported character card: "${parsed.name}" (${id})`);
     return res.status(201).json({ character: formatCharacter(created) });
   } catch (e: any) {
-    logger.error('SYSTEM', `Failed to import character card: ${e.message}`);
     return res.status(400).json({ error: `Import failed: ${e.message}` });
+  }
+});
+
+// ================= USER RELATIONSHIPS CRUD =================
+// List relationships for character
+charactersRouter.get('/:id/relationships', (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  try {
+    const rows = db.prepare('SELECT * FROM user_relationships WHERE character_id = ? ORDER BY created_at ASC').all(id);
+    return res.json({ relationships: rows });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Add relationship
+charactersRouter.post('/:id/relationships', (req: AuthenticatedRequest, res: Response) => {
+  const { id: character_id } = req.params;
+  const { user_identifier, relationship_type, relationship_notes, affinity_level = 50 } = req.body;
+  if (!user_identifier || !relationship_type || !relationship_notes) {
+    return res.status(400).json({ error: 'user_identifier, relationship_type, and relationship_notes are required' });
+  }
+
+  const id = `rel_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+  const now = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      INSERT INTO user_relationships (id, character_id, user_identifier, relationship_type, relationship_notes, affinity_level, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, character_id, user_identifier.trim(), relationship_type.trim(), relationship_notes.trim(), affinity_level, now, now);
+
+    const created = db.prepare('SELECT * FROM user_relationships WHERE id = ?').get(id);
+    return res.status(201).json({ relationship: created });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Update relationship
+charactersRouter.put('/relationships/:relId', (req: AuthenticatedRequest, res: Response) => {
+  const { relId } = req.params;
+  const { user_identifier, relationship_type, relationship_notes, affinity_level } = req.body;
+  const now = new Date().toISOString();
+
+  try {
+    db.prepare(`
+      UPDATE user_relationships SET
+        user_identifier = COALESCE(?, user_identifier),
+        relationship_type = COALESCE(?, relationship_type),
+        relationship_notes = COALESCE(?, relationship_notes),
+        affinity_level = COALESCE(?, affinity_level),
+        updated_at = ?
+      WHERE id = ?
+    `).run(user_identifier, relationship_type, relationship_notes, affinity_level, now, relId);
+
+    const updated = db.prepare('SELECT * FROM user_relationships WHERE id = ?').get(relId);
+    return res.json({ relationship: updated });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Delete relationship
+charactersRouter.delete('/relationships/:relId', (req: AuthenticatedRequest, res: Response) => {
+  const { relId } = req.params;
+  try {
+    db.prepare('DELETE FROM user_relationships WHERE id = ?').run(relId);
+    return res.json({ success: true, message: 'Relationship deleted' });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
   }
 });

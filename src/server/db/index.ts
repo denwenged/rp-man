@@ -42,11 +42,23 @@ export function initDatabase() {
       post_history_instructions TEXT DEFAULT '',
       creator_notes TEXT DEFAULT '',
       tags TEXT DEFAULT '[]',
+      expressions TEXT DEFAULT '[]',
       user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       is_public INTEGER DEFAULT 1,
       model_config TEXT DEFAULT '{}',
       discord_config TEXT DEFAULT '{}',
       context_config TEXT DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_relationships (
+      id TEXT PRIMARY KEY,
+      character_id TEXT REFERENCES characters(id) ON DELETE CASCADE,
+      user_identifier TEXT NOT NULL,
+      relationship_type TEXT NOT NULL,
+      relationship_notes TEXT NOT NULL,
+      affinity_level INTEGER DEFAULT 50,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -73,8 +85,35 @@ export function initDatabase() {
       swipe_index INTEGER DEFAULT 0,
       user_persona_name TEXT DEFAULT '',
       user_persona_avatar TEXT DEFAULT '',
+      expression TEXT DEFAULT '',
+      expression_emoji TEXT DEFAULT '',
+      expression_avatar TEXT DEFAULT '',
       tokens_used INTEGER DEFAULT 0,
       model_used TEXT DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS group_sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      character_ids TEXT DEFAULT '[]',
+      scenario TEXT DEFAULT '',
+      user_persona_name TEXT DEFAULT 'User',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS group_messages (
+      id TEXT PRIMARY KEY,
+      group_id TEXT REFERENCES group_sessions(id) ON DELETE CASCADE,
+      sender_type TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      sender_name TEXT NOT NULL,
+      sender_avatar TEXT DEFAULT '',
+      content TEXT NOT NULL,
+      expression TEXT DEFAULT '',
+      expression_emoji TEXT DEFAULT '',
       created_at TEXT NOT NULL
     );
 
@@ -147,10 +186,29 @@ export function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_characters_user ON characters(user_id);
+    CREATE INDEX IF NOT EXISTS idx_relationships_char ON user_relationships(character_id);
+    CREATE INDEX IF NOT EXISTS idx_group_messages_grp ON group_messages(group_id);
     CREATE INDEX IF NOT EXISTS idx_lore_entries_book ON lore_entries(lorebook_id);
     CREATE INDEX IF NOT EXISTS idx_discord_ctx ON discord_chat_contexts(channel_id, character_id);
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON system_logs(timestamp);
   `);
+
+  // Safe migration checks for new columns if DB already exists
+  try {
+    const charCols = db.prepare("PRAGMA table_info(characters)").all() as any[];
+    if (!charCols.some(c => c.name === 'expressions')) {
+      db.prepare("ALTER TABLE characters ADD COLUMN expressions TEXT DEFAULT '[]'").run();
+    }
+  } catch (e) {}
+
+  try {
+    const msgCols = db.prepare("PRAGMA table_info(chat_messages)").all() as any[];
+    if (!msgCols.some(c => c.name === 'expression')) {
+      db.prepare("ALTER TABLE chat_messages ADD COLUMN expression TEXT DEFAULT ''").run();
+      db.prepare("ALTER TABLE chat_messages ADD COLUMN expression_emoji TEXT DEFAULT ''").run();
+      db.prepare("ALTER TABLE chat_messages ADD COLUMN expression_avatar TEXT DEFAULT ''").run();
+    }
+  } catch (e) {}
 
   seedInitialData();
 }
@@ -353,6 +411,12 @@ Never break character or speak as an AI model. Write natural responses in standa
         post_history_instructions: 'Keep responses immersive, character-authentic, and concise (under 200 words unless more detail is requested).',
         creator_notes: 'Great starter character for gritty sci-fi and cyberpunk roleplay.',
         tags: JSON.stringify(['Cyberpunk', 'Sci-Fi', 'Netrunner', 'Witty']),
+        expressions: JSON.stringify([
+          { id: 'exp_aria_smug', name: 'smug', emoji: '😏', avatar_url: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=400&auto=format&fit=crop&q=80' },
+          { id: 'exp_aria_angry', name: 'angry', emoji: '😡', avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80' },
+          { id: 'exp_aria_happy', name: 'happy', emoji: '😊', avatar_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&auto=format&fit=crop&q=80' },
+          { id: 'exp_aria_blushing', name: 'blushing', emoji: '😳', avatar_url: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&auto=format&fit=crop&q=80' }
+        ]),
         user_id: adminId,
         is_public: 1,
         model_config: JSON.stringify({
@@ -402,6 +466,10 @@ Always stay in character. Use asterisk notation for actions *like this* and quot
         post_history_instructions: 'Maintain a mystical, intellectual, and inviting tone.',
         creator_notes: 'Designed for fantasy quests, lore research, and mystical adventures.',
         tags: JSON.stringify(['Fantasy', 'Magic', 'Scholar', 'Wise']),
+        expressions: JSON.stringify([
+          { id: 'exp_val_wise', name: 'neutral', emoji: '✨', avatar_url: 'https://images.unsplash.com/photo-1514539079130-25950c84af65?w=400&auto=format&fit=crop&q=80' },
+          { id: 'exp_val_curious', name: 'curious', emoji: '🧐', avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80' }
+        ]),
         user_id: adminId,
         is_public: 1,
         model_config: JSON.stringify({
@@ -449,6 +517,11 @@ Stay strictly in character. Actions in asterisks *like this*, speech in quotes "
         post_history_instructions: 'Keep replies whimsical, expressive, and fun.',
         creator_notes: 'Casual and comical companion character.',
         tags: JSON.stringify(['Comedy', 'Familiar', 'Cat', 'Fantasy']),
+        expressions: JSON.stringify([
+          { id: 'exp_luna_smug', name: 'smug', emoji: '😼', avatar_url: 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=400&auto=format&fit=crop&q=80' },
+          { id: 'exp_luna_happy', name: 'happy', emoji: '😸', avatar_url: 'https://images.unsplash.com/photo-1533738363-b7f9aef128ce?w=400&auto=format&fit=crop&q=80' },
+          { id: 'exp_luna_angry', name: 'angry', emoji: '😾', avatar_url: 'https://images.unsplash.com/photo-1561948955-570b270e7c36?w=400&auto=format&fit=crop&q=80' }
+        ]),
         user_id: adminId,
         is_public: 1,
         model_config: JSON.stringify({
@@ -485,12 +558,12 @@ Stay strictly in character. Actions in asterisks *like this*, speech in quotes "
       INSERT INTO characters (
         id, name, avatar_url, tagline, description, personality, scenario,
         first_mes, alternate_greetings, mes_example, system_prompt, post_history_instructions,
-        creator_notes, tags, user_id, is_public, model_config, discord_config, context_config,
+        creator_notes, tags, expressions, user_id, is_public, model_config, discord_config, context_config,
         created_at, updated_at
       ) VALUES (
         @id, @name, @avatar_url, @tagline, @description, @personality, @scenario,
         @first_mes, @alternate_greetings, @mes_example, @system_prompt, @post_history_instructions,
-        @creator_notes, @tags, @user_id, @is_public, @model_config, @discord_config, @context_config,
+        @creator_notes, @tags, @expressions, @user_id, @is_public, @model_config, @discord_config, @context_config,
         @created_at, @updated_at
       )
     `);
@@ -503,6 +576,21 @@ Stay strictly in character. Actions in asterisks *like this*, speech in quotes "
       });
     }
 
-    console.log(`[DB] Seeded ${charactersToSeed.length} default RP characters.`);
+    // Seed sample relationship for Aria
+    db.prepare(`
+      INSERT INTO user_relationships (id, character_id, user_identifier, relationship_type, relationship_notes, affinity_level, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'rel_aria_father',
+      'char_aria_cyber',
+      'Father',
+      'Father',
+      'Aria treats you with rare, unconditional respect, warm protectiveness, and deference. She dropped her sarcastic facade around you because you raised and protected her in the Under-grid.',
+      95,
+      now,
+      now
+    );
+
+    console.log(`[DB] Seeded ${charactersToSeed.length} default RP characters with expressions and user relationships.`);
   }
 }

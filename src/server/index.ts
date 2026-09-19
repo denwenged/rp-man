@@ -10,6 +10,7 @@ import { authRouter } from './routes/auth';
 import { usersRouter } from './routes/users';
 import { charactersRouter } from './routes/characters';
 import { chatsRouter } from './routes/chats';
+import { groupsRouter } from './routes/groups';
 import { ollamaRouter } from './routes/ollama';
 import { discordRouter } from './routes/discord';
 import { providersRouter } from './routes/providers';
@@ -41,7 +42,7 @@ initDatabase();
 
 // Middleware
 app.use(cors({
-  origin: true, // Allow all origins for preview URLs and Docker environments
+  origin: true,
   credentials: true
 }));
 app.use(express.json({ limit: '25mb' }));
@@ -53,6 +54,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/characters', charactersRouter);
 app.use('/api/chats', chatsRouter);
+app.use('/api/groups', groupsRouter);
 app.use('/api/ollama', ollamaRouter);
 app.use('/api/discord', discordRouter);
 app.use('/api/providers', providersRouter);
@@ -88,7 +90,6 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`🏰 RP-Man Server is active on http://${HOST}:${PORT}`);
 });
 
-// Keep process active
 const heartbeat = setInterval(() => {}, 1000 * 60 * 60);
 process.on('SIGINT', () => {
   clearInterval(heartbeat);

@@ -9,14 +9,19 @@ import { ContextManager, FormattedPromptPayload } from './contextManager';
 export interface GenerateOptions {
   character: Character;
   userPersonaName: string;
+  discordUserId?: string;
   history: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
   rollingSummary?: string;
   onToken?: (token: string) => void;
-  priority?: number; // 1 for Web Playground, 3 for Discord
+  priority?: number;
 }
 
 export interface GenerateResult {
   text: string;
+  cleanText: string;
+  expression?: string;
+  expressionEmoji?: string;
+  expressionAvatar?: string;
   tokensUsed: number;
   modelUsed: string;
   providerUsed: string;
@@ -24,9 +29,6 @@ export interface GenerateResult {
 }
 
 class LLMService {
-  /**
-   * Get server settings
-   */
   private getServerSettings(): ServerSettings {
     try {
       const row = db.prepare('SELECT config FROM server_settings WHERE id = ?').get('global') as { config: string } | undefined;
@@ -48,9 +50,6 @@ class LLMService {
     };
   }
 
-  /**
-   * Resolve which provider & model to use for this generation
-   */
   private resolveProvider(character: Character): {
     providerType: string;
     modelName: string;
@@ -80,7 +79,6 @@ class LLMService {
       };
     }
 
-    // Lookup in llm_providers table
     const providerRow = db.prepare('SELECT * FROM llm_providers WHERE type = ? AND enabled = 1 LIMIT 1').get(charProvider) as any;
     if (providerRow) {
       return {
@@ -92,7 +90,6 @@ class LLMService {
       };
     }
 
-    // Fallback to OpenAI or Ollama
     return {
       providerType: 'ollama',
       modelName: 'llama3.2:3b',
@@ -102,54 +99,54 @@ class LLMService {
     };
   }
 
-  /**
-   * Execute Generation routed through the concurrency queue
-   */
   public async generate(options: GenerateOptions): Promise<GenerateResult> {
-    const { character, userPersonaName, history, rollingSummary, onToken, priority = 3 } = options;
+    const { character, userPersonaName, discordUserId, history, rollingSummary, onToken, priority = 3 } = options;
     const settings = this.getServerSettings();
 
-    // 1. Build context & prompt
     const context = ContextManager.buildContext(
       character,
       userPersonaName,
       history,
       rollingSummary,
-      settings.max_context_tokens_hard_cap
+      settings.max_context_tokens_hard_cap,
+      discordUserId
     );
 
     const resolved = this.resolveProvider(character);
     const params = character.model_config?.parameters || {};
 
+    const relNote = context.activeRelationship ? ` [Rel: ${context.activeRelationship.relationship_type}]` : '';
     logger.info(
       'LLM',
-      `Prompting [${character.name}] via ${resolved.providerType} (${resolved.modelName}) - Est. Input Tokens: ${context.estimatedTokens}`
+      `Prompting [${character.name}]${relNote} via ${resolved.providerType} (${resolved.modelName}) - Est. Input Tokens: ${context.estimatedTokens}`
     );
 
     const startTime = Date.now();
 
-    // 2. Wrap execution in concurrency queue
     return queueService.enqueue(
       async () => {
-        let resultText = '';
-        let tokensUsed = 0;
+        let rawText = '';
 
         if (resolved.providerType === 'ollama') {
-          resultText = await this.callOllama(resolved, context, params, onToken);
+          rawText = await this.callOllama(resolved, context, params, onToken);
         } else if (resolved.providerType === 'anthropic') {
-          resultText = await this.callAnthropic(resolved, context, params, onToken);
+          rawText = await this.callAnthropic(resolved, context, params, onToken);
         } else {
-          // OpenAI, OpenRouter, Custom OpenAI-Compatible
-          resultText = await this.callOpenAICompatible(resolved, context, params, onToken);
+          rawText = await this.callOpenAICompatible(resolved, context, params, onToken);
         }
 
         const latencyMs = Date.now() - startTime;
-        tokensUsed = context.estimatedTokens + ContextManager.estimateTokens(resultText);
+        const parsedExp = ContextManager.parseExpression(rawText, character);
+        const tokensUsed = context.estimatedTokens + ContextManager.estimateTokens(rawText);
 
-        logger.info('LLM', `Completed generation for [${character.name}] in ${latencyMs}ms (${tokensUsed} total est. tokens)`);
+        logger.info('LLM', `Completed generation for [${character.name}] in ${latencyMs}ms (${tokensUsed} est. tokens)`);
 
         return {
-          text: resultText.trim(),
+          text: rawText.trim(),
+          cleanText: parsedExp.cleanText || rawText.trim(),
+          expression: parsedExp.expression,
+          expressionEmoji: parsedExp.expressionEmoji,
+          expressionAvatar: parsedExp.expressionAvatar || character.avatar_url,
           tokensUsed,
           modelUsed: resolved.modelName,
           providerUsed: resolved.providerType,
@@ -164,9 +161,6 @@ class LLMService {
     );
   }
 
-  /**
-   * Call Local Ollama /api/chat
-   */
   private async callOllama(
     provider: { baseUrl: string; modelName: string; keepAlive?: string },
     context: FormattedPromptPayload,
@@ -225,13 +219,8 @@ class LLMService {
           }
         });
 
-        response.data.on('end', () => {
-          resolve(fullText);
-        });
-
-        response.data.on('error', (err: any) => {
-          reject(err);
-        });
+        response.data.on('end', () => resolve(fullText));
+        response.data.on('error', (err: any) => reject(err));
       });
     } else {
       const response = await axios.post(
@@ -243,9 +232,6 @@ class LLMService {
     }
   }
 
-  /**
-   * Call OpenAI / OpenRouter / Custom OpenAI-compatible
-   */
   private async callOpenAICompatible(
     provider: { baseUrl: string; modelName: string; apiKey: string; providerType: string },
     context: FormattedPromptPayload,
@@ -257,18 +243,8 @@ class LLMService {
       ...context.messages
     ];
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-
-    if (provider.apiKey) {
-      headers['Authorization'] = `Bearer ${provider.apiKey}`;
-    }
-
-    if (provider.providerType === 'openrouter') {
-      headers['HTTP-Referer'] = 'https://github.com/denwenged/rp-man';
-      headers['X-Title'] = 'RP-Man Character Manager';
-    }
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (provider.apiKey) headers['Authorization'] = `Bearer ${provider.apiKey}`;
 
     const requestPayload: any = {
       model: provider.modelName,
@@ -324,13 +300,8 @@ class LLMService {
           }
         });
 
-        response.data.on('end', () => {
-          resolve(fullText);
-        });
-
-        response.data.on('error', (err: any) => {
-          reject(err);
-        });
+        response.data.on('end', () => resolve(fullText));
+        response.data.on('error', (err: any) => reject(err));
       });
     } else {
       const response = await axios.post(targetUrl, requestPayload, { headers, timeout: 120000 });
@@ -338,9 +309,6 @@ class LLMService {
     }
   }
 
-  /**
-   * Call Anthropic Claude Messages API
-   */
   private async callAnthropic(
     provider: { baseUrl: string; modelName: string; apiKey: string },
     context: FormattedPromptPayload,
@@ -404,13 +372,8 @@ class LLMService {
           }
         });
 
-        response.data.on('end', () => {
-          resolve(fullText);
-        });
-
-        response.data.on('error', (err: any) => {
-          reject(err);
-        });
+        response.data.on('end', () => resolve(fullText));
+        response.data.on('error', (err: any) => reject(err));
       });
     } else {
       const response = await axios.post(targetUrl, requestPayload, { headers, timeout: 120000 });
@@ -418,9 +381,6 @@ class LLMService {
     }
   }
 
-  /**
-   * Summarize past conversation to compact summary
-   */
   public async generateSummary(
     character: Character,
     previousSummary: string,
@@ -429,7 +389,6 @@ class LLMService {
     const dialogStr = messagesToSummarize.map(m => `${m.role}: ${m.content}`).join('\n');
     const summaryPrompt = `You are a concise roleplay archivist.
 Summarize the following roleplay events between ${character.name} and User into 2-3 brief paragraphs, highlighting key relationships, plot points, items acquired, and emotional shifts.
-Keep it compact and factual.
 
 ${previousSummary ? `[Previous Summary]:\n${previousSummary}\n\n` : ''}
 [Recent Dialogue]:
@@ -438,7 +397,6 @@ ${dialogStr}
 [Updated Compact Summary]:`;
 
     try {
-      const resolved = this.resolveProvider(character);
       const res = await this.generate({
         character: {
           ...character,

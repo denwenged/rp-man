@@ -30,13 +30,13 @@ export interface ModelParameters {
 export interface LoreEntry {
   id: string;
   lorebook_id: string;
-  keys: string[]; // Keywords that trigger insertion
+  keys: string[];
   secondary_keys?: string[];
   content: string;
   comment?: string;
   enabled: boolean;
-  constant: boolean; // Always inject regardless of keywords
-  selective: boolean; // Must match secondary_keys too
+  constant: boolean;
+  selective: boolean;
   priority: number;
   order: number;
 }
@@ -51,14 +51,32 @@ export interface Lorebook {
   updated_at: string;
 }
 
+export interface CharacterExpression {
+  id: string;
+  name: string; // e.g. "angry", "happy", "blushing", "smug", "sad", "surprised", "neutral"
+  emoji: string; // e.g. "😡", "😊", "😳", "😏", "😢", "😲", "😐"
+  avatar_url: string; // URL of the expression avatar
+}
+
+export interface UserRelationship {
+  id: string;
+  character_id: string;
+  user_identifier: string; // Discord user ID (e.g. "123456789") or Web persona name (e.g. "Joshua", "Father")
+  relationship_type: string; // e.g. "Friend", "Father", "Mother", "Rival", "Enemy", "Lover", "Master", "Apprentice", "Sibling", "Custom"
+  relationship_notes: string; // e.g. "Treat with deep reverence and parental love. He taught you everything."
+  affinity_level: number; // 0 - 100
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CharacterDiscordConfig {
-  trigger_prefix?: string; // e.g. "aria:", "[Aria]", "!aria"
+  trigger_prefix?: string;
   trigger_suffix?: string;
-  webhook_url?: string; // Direct outbound webhook
-  channel_ids?: string[]; // Auto-route messages in these channels to this character
+  webhook_url?: string;
+  channel_ids?: string[];
   auto_react?: boolean;
   reply_on_mention?: boolean;
-  tupperbox_proxy?: boolean; // Delete user message and proxy as character
+  tupperbox_proxy?: boolean;
 }
 
 export interface CharacterModelConfig {
@@ -66,7 +84,7 @@ export interface CharacterModelConfig {
   model: string;
   custom_endpoint_id?: string;
   parameters: ModelParameters;
-  keep_alive?: string; // Ollama keep_alive (e.g., '0', '5m', '10m')
+  keep_alive?: string;
 }
 
 export interface CharacterContextConfig {
@@ -94,6 +112,8 @@ export interface Character {
   tags: string[];
   user_id: string;
   is_public: boolean;
+  expressions?: CharacterExpression[];
+  relationships?: UserRelationship[];
   model_config: CharacterModelConfig;
   discord_config: CharacterDiscordConfig;
   context_config: CharacterContextConfig;
@@ -106,10 +126,15 @@ export interface ChatMessage {
   session_id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  swipes?: string[]; // Alternate generated responses
+  swipes?: string[];
   swipe_index?: number;
   user_persona_name?: string;
   user_persona_avatar?: string;
+  expression?: string; // e.g. "angry", "happy"
+  expression_emoji?: string; // e.g. "😡"
+  expression_avatar?: string; // avatar url used for this message
+  character_id?: string;
+  character_name?: string;
   tokens_used?: number;
   model_used?: string;
   created_at: string;
@@ -128,6 +153,30 @@ export interface ChatSession {
   updated_at: string;
   messages_count?: number;
   last_message?: string;
+}
+
+export interface GroupSession {
+  id: string;
+  title: string;
+  user_id: string;
+  character_ids: string[];
+  scenario: string;
+  user_persona_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GroupMessage {
+  id: string;
+  group_id: string;
+  sender_type: 'user' | 'character';
+  sender_id: string; // character_id or user_id
+  sender_name: string;
+  sender_avatar: string;
+  content: string;
+  expression?: string;
+  expression_emoji?: string;
+  created_at: string;
 }
 
 export interface OllamaModelInfo {

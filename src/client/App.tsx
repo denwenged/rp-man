@@ -8,6 +8,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { CharactersPage } from './pages/CharactersPage';
 import { CharacterEditorPage } from './pages/CharacterEditorPage';
 import { ChatPlaygroundPage } from './pages/ChatPlaygroundPage';
+import { GroupChatPage } from './pages/GroupChatPage';
 import { DiscordBotPage } from './pages/DiscordBotPage';
 import { OllamaManagerPage } from './pages/OllamaManagerPage';
 import { ProvidersPage } from './pages/ProvidersPage';
@@ -61,6 +62,7 @@ export const App: React.FC = () => {
               <Route path="characters" element={<CharactersPage />} />
               <Route path="characters/:id" element={<CharacterEditorPage />} />
               <Route path="playground" element={<ChatPlaygroundPage />} />
+              <Route path="groups" element={<GroupChatPage />} />
               <Route path="discord" element={<DiscordBotPage />} />
               <Route path="ollama" element={<OllamaManagerPage />} />
               <Route path="providers" element={<ProvidersPage />} />

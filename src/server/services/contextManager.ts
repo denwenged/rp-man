@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { Character, ChatMessage, Lorebook, LoreEntry, ServerSettings } from '../../shared/types';
+import { Character, ChatMessage, Lorebook, LoreEntry, ServerSettings, CharacterExpression, UserRelationship } from '../../shared/types';
 import { logger } from './loggerService';
 
 export interface FormattedPromptPayload {
@@ -8,6 +8,7 @@ export interface FormattedPromptPayload {
   estimatedTokens: number;
   injectedLore: string[];
   summaryIncluded: boolean;
+  activeRelationship?: UserRelationship | null;
 }
 
 export class ContextManager {
@@ -16,7 +17,6 @@ export class ContextManager {
    */
   public static estimateTokens(text: string): number {
     if (!text) return 0;
-    // Word and character hybrid approximation
     const wordCount = text.trim().split(/\s+/).length;
     const charEstimate = Math.ceil(text.length / 3.8);
     return Math.max(wordCount, charEstimate);
@@ -41,6 +41,36 @@ export class ContextManager {
       .replace(/\{\{scenario\}\}/gi, scenario)
       .replace(/\{\{time\}\}/gi, now.toLocaleTimeString())
       .replace(/\{\{date\}\}/gi, now.toLocaleDateString());
+  }
+
+  /**
+   * Find relationship between character and user
+   */
+  public static findRelationship(characterId: string, userIdentifier: string): UserRelationship | null {
+    if (!userIdentifier) return null;
+    try {
+      const row = db.prepare(`
+        SELECT * FROM user_relationships 
+        WHERE character_id = ? AND (LOWER(user_identifier) = LOWER(?) OR user_identifier = ?)
+        LIMIT 1
+      `).get(characterId, userIdentifier, userIdentifier) as any;
+
+      if (row) {
+        return {
+          id: row.id,
+          character_id: row.character_id,
+          user_identifier: row.user_identifier,
+          relationship_type: row.relationship_type,
+          relationship_notes: row.relationship_notes,
+          affinity_level: row.affinity_level,
+          created_at: row.created_at,
+          updated_at: row.updated_at
+        };
+      }
+    } catch (e) {
+      logger.error('SYSTEM', 'Failed to query user relationship', e);
+    }
+    return null;
   }
 
   /**
@@ -72,7 +102,6 @@ export class ContextManager {
           let isMatch = constant;
 
           if (!isMatch && keys.length > 0) {
-            // Check if any primary key matches
             const hasPrimaryKey = keys.some(k => {
               const cleaned = k.trim().toLowerCase();
               return cleaned && normalizedText.includes(cleaned);
@@ -80,7 +109,6 @@ export class ContextManager {
 
             if (hasPrimaryKey) {
               if (selective && secondaryKeys.length > 0) {
-                // Must also match secondary key
                 const hasSecondaryKey = secondaryKeys.some(sk => {
                   const cleaned = sk.trim().toLowerCase();
                   return cleaned && normalizedText.includes(cleaned);
@@ -118,6 +146,62 @@ export class ContextManager {
   }
 
   /**
+   * Parse emotional expression from generated text
+   */
+  public static parseExpression(
+    text: string,
+    character: Character
+  ): { cleanText: string; expression?: string; expressionEmoji?: string; expressionAvatar?: string } {
+    const expressions: CharacterExpression[] = character.expressions || [];
+    if (expressions.length === 0) {
+      return { cleanText: text };
+    }
+
+    let matchedExp: CharacterExpression | undefined;
+    let cleanText = text;
+
+    // Check [emotion: name] or [expression: name] tag
+    const tagMatch = text.match(/\[(?:emotion|expression|mood):\s*([a-zA-Z0-9_\-]+)\]/i);
+    if (tagMatch) {
+      const expName = tagMatch[1].toLowerCase();
+      matchedExp = expressions.find(e => e.name.toLowerCase() === expName);
+      cleanText = text.replace(tagMatch[0], '').trim();
+    }
+
+    // Check emojis in text
+    if (!matchedExp) {
+      for (const exp of expressions) {
+        if (exp.emoji && text.includes(exp.emoji)) {
+          matchedExp = exp;
+          break;
+        }
+      }
+    }
+
+    // Check keyword triggers in actions e.g. *smiles happily*, *glares angrily*
+    if (!matchedExp) {
+      const lower = text.toLowerCase();
+      for (const exp of expressions) {
+        if (exp.name && lower.includes(exp.name.toLowerCase())) {
+          matchedExp = exp;
+          break;
+        }
+      }
+    }
+
+    if (matchedExp) {
+      return {
+        cleanText,
+        expression: matchedExp.name,
+        expressionEmoji: matchedExp.emoji,
+        expressionAvatar: matchedExp.avatar_url || character.avatar_url
+      };
+    }
+
+    return { cleanText };
+  }
+
+  /**
    * Build complete context ready for LLM invocation
    */
   public static buildContext(
@@ -125,26 +209,31 @@ export class ContextManager {
     userPersonaName: string,
     history: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
     rollingSummary: string = '',
-    serverHardCap?: number
+    serverHardCap?: number,
+    discordUserId?: string
   ): FormattedPromptPayload {
     const charName = character.name || 'Assistant';
     const userName = userPersonaName || 'User';
 
-    // 1. Gather recent text to trigger lore matching
+    // 1. Lorebook Matching
     const recentMessagesText = history.slice(-5).map(m => m.content).join('\n');
     const { entries: matchedLore, matchedKeys } = this.findMatchingLore(character, recentMessagesText);
 
-    // 2. Build Core System Prompt
+    // 2. User Relationship lookup (checks persona name or discord user ID)
+    const relationship = this.findRelationship(character.id, discordUserId || '') ||
+                         this.findRelationship(character.id, userName);
+
+    // 3. Build Core System Prompt Sections
     const promptSections: string[] = [];
 
-    // Base System Prompt or default character instructions
+    // Base System Prompt
     let baseSys = character.system_prompt?.trim();
     if (!baseSys) {
       baseSys = `You are ${charName}. Roleplay as ${charName} engaging with ${userName}. Respond in character with natural dialogue and descriptive actions using standard roleplay notation (*actions in asterisks*, "dialogue in quotes"). Stay strictly in character at all times.`;
     }
     promptSections.push(this.replaceMacros(baseSys, charName, userName, character.scenario));
 
-    // Character Persona / Description
+    // Persona & Description
     if (character.description?.trim()) {
       promptSections.push(`[Character Persona - ${charName}]\n${this.replaceMacros(character.description, charName, userName)}`);
     }
@@ -158,12 +247,23 @@ export class ContextManager {
       promptSections.push(`[Scenario / Setting]\n${this.replaceMacros(character.scenario, charName, userName, character.scenario)}`);
     }
 
+    // Dynamic Relationship Instructions with this specific User
+    if (relationship) {
+      promptSections.push(`[Your Bond & Relationship with {{user}}]\nRelationship Type: ${relationship.relationship_type} (Affinity: ${relationship.affinity_level}/100)\nDirectives: ${this.replaceMacros(relationship.relationship_notes, charName, userName)}`);
+    }
+
+    // Emotion Expressions Directive
+    if (character.expressions && character.expressions.length > 0) {
+      const expList = character.expressions.map(e => `${e.name} ${e.emoji || ''}`).join(', ');
+      promptSections.push(`[Emotion Expressions]:\nYou have the following emotion avatars available: [${expList}]. Express your mood naturally or tag it using [emotion: mood_name] (e.g. [emotion: angry] or [emotion: smug]) to dynamically update your avatar expression.`);
+    }
+
     // Example Dialogues
     if (character.mes_example?.trim()) {
       promptSections.push(`[Example Dialogue]\n${this.replaceMacros(character.mes_example, charName, userName)}`);
     }
 
-    // Matched Lorebook World Info
+    // Injected World Lore
     const injectedLoreTexts: string[] = [];
     if (matchedLore.length > 0) {
       const loreBlock = matchedLore
@@ -173,21 +273,21 @@ export class ContextManager {
       injectedLoreTexts.push(...matchedLore.map(e => e.comment || e.keys.join(', ')));
     }
 
-    // Rolling Summary of past events
+    // Rolling Summary
     let summaryIncluded = false;
     if (rollingSummary?.trim()) {
       promptSections.push(`[Summary of Previous Events in Roleplay]\n${this.replaceMacros(rollingSummary, charName, userName)}`);
       summaryIncluded = true;
     }
 
-    // Post-History / Special Instructions (Formatting, Tone, Anti-Break)
+    // Post-History / Formatting guard
     if (character.post_history_instructions?.trim()) {
       promptSections.push(`[Special Instructions]\n${this.replaceMacros(character.post_history_instructions, charName, userName)}`);
     }
 
     const fullSystemPrompt = promptSections.join('\n\n');
 
-    // 3. Token Budgeting & Sliding Window
+    // 4. Token Budgeting & Sliding Window
     const charContextLimit = character.context_config?.max_context_tokens || 4096;
     const maxTokensBudget = Math.min(charContextLimit, serverHardCap || 8192);
     const maxResponseTokens = character.model_config?.parameters?.max_tokens || 400;
@@ -195,7 +295,6 @@ export class ContextManager {
     const systemPromptTokens = this.estimateTokens(fullSystemPrompt);
     const availableForHistory = Math.max(400, maxTokensBudget - systemPromptTokens - maxResponseTokens - 100);
 
-    // Filter and prune history from oldest to newest to fit in token budget
     const formattedMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [];
     let currentHistoryTokens = 0;
 
@@ -205,10 +304,9 @@ export class ContextManager {
     for (let i = candidateHistory.length - 1; i >= 0; i--) {
       const msg = candidateHistory[i];
       const processedContent = this.replaceMacros(msg.content, charName, userName);
-      const msgTokens = this.estimateTokens(processedContent) + 8; // Overhead for message framing
+      const msgTokens = this.estimateTokens(processedContent) + 8;
 
       if (currentHistoryTokens + msgTokens > availableForHistory && formattedMessages.length > 0) {
-        // Exceeded budget; stop adding older messages
         break;
       }
 
@@ -226,7 +324,8 @@ export class ContextManager {
       messages: formattedMessages,
       estimatedTokens: totalEstimatedTokens,
       injectedLore: injectedLoreTexts,
-      summaryIncluded
+      summaryIncluded,
+      activeRelationship: relationship
     };
   }
 }

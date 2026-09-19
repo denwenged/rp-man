@@ -17,10 +17,12 @@ import {
   Info,
   Clock,
   Zap,
-  RotateCcw
+  RotateCcw,
+  Smile,
+  Heart
 } from 'lucide-react';
 import { api } from '../api';
-import { Character, ChatSession, ChatMessage } from '../../shared/types';
+import { Character, ChatSession, ChatMessage, UserRelationship } from '../../shared/types';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -39,8 +41,9 @@ export const ChatPlaygroundPage: React.FC = () => {
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
-  // User Persona settings
+  // User Persona settings & Relationships
   const [userName, setUserName] = useState('User');
+  const [activeRel, setActiveRel] = useState<UserRelationship | null>(null);
   const [showInspector, setShowInspector] = useState(false);
   const [inspectorData, setInspectorData] = useState<any>(null);
 
@@ -51,7 +54,6 @@ export const ChatPlaygroundPage: React.FC = () => {
   const { success, error, info } = useToast();
   const navigate = useNavigate();
 
-  // 1. Initial Load of Characters
   useEffect(() => {
     const fetchChars = async () => {
       try {
@@ -74,7 +76,6 @@ export const ChatPlaygroundPage: React.FC = () => {
     }
   }, [requestedCharId]);
 
-  // 2. Load Sessions when selected character changes
   useEffect(() => {
     if (!selectedChar) return;
     const fetchSessions = async () => {
@@ -82,10 +83,13 @@ export const ChatPlaygroundPage: React.FC = () => {
         const res = await api.getChatSessions(selectedChar.id);
         setSessions(res.sessions);
 
+        // Check if there's a defined relationship for this user persona
+        const matched = selectedChar.relationships?.find(r => r.user_identifier.toLowerCase() === userName.toLowerCase());
+        setActiveRel(matched || null);
+
         if (res.sessions.length > 0) {
           loadSession(res.sessions[0].id);
         } else {
-          // Auto-create initial session
           createNewSession(selectedChar.id);
         }
       } catch (e: any) {
@@ -95,7 +99,13 @@ export const ChatPlaygroundPage: React.FC = () => {
     fetchSessions();
   }, [selectedChar?.id]);
 
-  // Scroll to bottom when messages update
+  useEffect(() => {
+    if (selectedChar) {
+      const matched = selectedChar.relationships?.find(r => r.user_identifier.toLowerCase() === userName.toLowerCase());
+      setActiveRel(matched || null);
+    }
+  }, [userName, selectedChar]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, sending]);
@@ -157,7 +167,6 @@ export const ChatPlaygroundPage: React.FC = () => {
     setInputText('');
     setSending(true);
 
-    // Optimistic user message insertion
     const tempUserMsg: ChatMessage = {
       id: `temp_${Date.now()}`,
       session_id: activeSessionId,
@@ -172,14 +181,12 @@ export const ChatPlaygroundPage: React.FC = () => {
 
     try {
       const res = await api.sendMessage(activeSessionId, text, userName);
-      // Replace optimistic message and append assistant message
       setMessages(prev => {
         const withoutTemp = prev.filter(m => m.id !== tempUserMsg.id);
         return [...withoutTemp, res.userMessage, res.assistantMessage];
       });
     } catch (err: any) {
       error(err.message || 'Generation error');
-      // Remove temp message if failed
       setMessages(prev => prev.filter(m => m.id !== tempUserMsg.id));
     } finally {
       setSending(false);
@@ -246,19 +253,16 @@ export const ChatPlaygroundPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  // Helper to format roleplay actions in italics & quotes in highlights
   const formatRPContent = (text: string) => {
     if (!text) return '';
-    // Format *actions in asterisks* into <em>...</em>
     let formatted = text.replace(/\*([^\*]+)\*/g, '<em class="text-zinc-400 font-normal">$1</em>');
-    // Format "dialogue in quotes" into highlighted text
     formatted = formatted.replace(/"([^"]+)"/g, '<span class="text-zinc-100 font-medium">"$1"</span>');
     return formatted;
   };
 
   return (
     <div className="h-[calc(100vh-6.5rem)] flex flex-col md:flex-row gap-4 animate-in fade-in duration-300">
-      {/* LEFT SIDEBAR: Character Picker & Session History */}
+      {/* LEFT SIDEBAR: Character Picker, Persona & Session History */}
       <div className="w-full md:w-72 bg-zinc-950 border border-zinc-800/80 rounded-2xl flex flex-col overflow-hidden shadow-matte shrink-0">
         {/* Character Selector */}
         <div className="p-3 border-b border-zinc-800/80 bg-zinc-900/40">
@@ -282,37 +286,45 @@ export const ChatPlaygroundPage: React.FC = () => {
               </option>
             ))}
           </select>
-
-          {selectedChar && (
-            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-zinc-800/60">
-              <img
-                src={selectedChar.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${selectedChar.name}`}
-                alt={selectedChar.name}
-                className="w-7 h-7 rounded-lg object-cover bg-zinc-800"
-              />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold text-zinc-200 truncate">{selectedChar.name}</p>
-                <p className="text-[10px] text-zinc-500 truncate">{selectedChar.tagline || 'RP Character'}</p>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* User Persona Input */}
-        <div className="px-3 py-2 border-b border-zinc-800/80 bg-zinc-950">
-          <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
-            Your Persona Name
-          </label>
-          <div className="flex items-center gap-1.5">
-            <User className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-            <input
-              type="text"
-              value={userName}
-              onChange={e => setUserName(e.target.value)}
-              placeholder="Your Name / Alias"
-              className="w-full px-2 py-1 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-brand-500"
-            />
+        {/* User Persona & Relationship Bar */}
+        <div className="px-3 py-2.5 border-b border-zinc-800/80 bg-zinc-950 space-y-2">
+          <div>
+            <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
+              Your Persona Name
+            </label>
+            <div className="flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+              <input
+                type="text"
+                value={userName}
+                onChange={e => setUserName(e.target.value)}
+                placeholder="e.g. Father, Joshua"
+                className="w-full px-2 py-1 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-zinc-200 focus:outline-none focus:border-brand-500"
+              />
+            </div>
           </div>
+
+          {/* Active Relationship Badge */}
+          {activeRel ? (
+            <div className="p-2 rounded-lg bg-rose-950/30 border border-rose-500/40 flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-1.5 text-rose-300">
+                <Heart className="w-3.5 h-3.5 fill-rose-400" />
+                <span className="font-bold">{activeRel.relationship_type} Bond</span>
+              </div>
+              <span className="text-[10px] text-rose-400 font-mono font-semibold">
+                Affinity: {activeRel.affinity_level}%
+              </span>
+            </div>
+          ) : (
+            selectedChar?.relationships && selectedChar.relationships.length > 0 && (
+              <div className="text-[10px] text-zinc-500 flex items-center gap-1">
+                <Heart className="w-3 h-3 text-zinc-600" />
+                <span>Available bonds: {selectedChar.relationships.map(r => r.user_identifier).join(', ')}</span>
+              </div>
+            )
+          )}
         </div>
 
         {/* Sessions List Header */}
@@ -373,7 +385,14 @@ export const ChatPlaygroundPage: React.FC = () => {
               className="w-8 h-8 rounded-xl object-cover bg-zinc-800 border border-zinc-700 shrink-0"
             />
             <div>
-              <h2 className="text-sm font-bold text-zinc-100">{selectedChar?.name}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-bold text-zinc-100">{selectedChar?.name}</h2>
+                {activeRel && (
+                  <span className="text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 px-1.5 py-0.2 rounded">
+                    {activeRel.relationship_type}
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-1.5 text-[10px] text-zinc-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                 <span>{selectedChar?.model_config?.model || 'Server Default'}</span>
@@ -403,36 +422,40 @@ export const ChatPlaygroundPage: React.FC = () => {
 
         {/* Messages Scroll Area */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
-          {messages.map((msg, idx) => {
+          {messages.map((msg) => {
             const isUser = msg.role === 'user';
             const isEditing = editingMsgId === msg.id;
             const swipes = msg.swipes || [msg.content];
             const swipeIdx = msg.swipe_index || 0;
             const isSwiping = swipingMsgId === msg.id;
 
+            // Use emotion avatar if available
+            const avatarToDisplay = isUser
+              ? (user?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${userName}`)
+              : (msg.expression_avatar || selectedChar?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${selectedChar?.name}`);
+
             return (
               <div
                 key={msg.id}
                 className={`flex items-start gap-3.5 max-w-3xl ${isUser ? 'ml-auto flex-row-reverse' : ''}`}
               >
-                {/* Avatar */}
                 <img
-                  src={
-                    isUser
-                      ? (user?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${userName}`)
-                      : (selectedChar?.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${selectedChar?.name}`)
-                  }
+                  src={avatarToDisplay}
                   alt="Avatar"
                   className="w-8 h-8 rounded-xl object-cover bg-zinc-900 border border-zinc-800 shrink-0 mt-1 shadow-sm"
                 />
 
-                {/* Message Bubble */}
                 <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} min-w-0 max-w-[85%]`}>
-                  {/* Sender Name & Timestamp */}
                   <div className="flex items-center gap-2 mb-1 px-1 text-[11px] text-zinc-500">
                     <span className="font-semibold text-zinc-400">
                       {isUser ? (msg.user_persona_name || userName) : selectedChar?.name}
                     </span>
+                    {!isUser && msg.expression && (
+                      <span className="text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded flex items-center gap-1">
+                        <span>{msg.expression_emoji || '✨'}</span>
+                        <span className="capitalize">{msg.expression}</span>
+                      </span>
+                    )}
                     {msg.tokens_used ? (
                       <span className="font-mono text-[10px] text-zinc-600">
                         ({msg.tokens_used} tok)
@@ -440,7 +463,6 @@ export const ChatPlaygroundPage: React.FC = () => {
                     ) : null}
                   </div>
 
-                  {/* Body Content */}
                   <div
                     className={`p-4 rounded-2xl text-xs leading-relaxed transition-all shadow-sm ${
                       isUser
@@ -480,7 +502,7 @@ export const ChatPlaygroundPage: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Message Action Bar (Swipes, Edit) */}
+                  {/* Action Bar */}
                   <div className="flex items-center gap-2 mt-1 px-1 text-[11px] text-zinc-500">
                     {!isUser && !isEditing && (
                       <div className="flex items-center gap-1 bg-zinc-900/60 border border-zinc-800 rounded-lg px-1.5 py-0.5">
@@ -521,7 +543,6 @@ export const ChatPlaygroundPage: React.FC = () => {
             );
           })}
 
-          {/* Typing Indicator */}
           {sending && (
             <div className="flex items-center gap-3 max-w-sm">
               <img
@@ -557,7 +578,7 @@ export const ChatPlaygroundPage: React.FC = () => {
                   handleSendMessage();
                 }
               }}
-              placeholder={`Send a message or action to ${selectedChar?.name || 'Character'}... (Enter to send, Shift+Enter for newline)`}
+              placeholder={`Send a message or action to ${selectedChar?.name || 'Character'}...`}
               className="flex-1 p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-500 resize-none font-sans leading-relaxed"
             />
             <button

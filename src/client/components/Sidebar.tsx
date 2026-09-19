@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Users2,
   MessageSquareCode,
+  Users,
   Bot,
   Server,
   Cpu,
@@ -13,7 +14,8 @@ import {
   Terminal,
   LogOut,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  Heart
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -29,7 +31,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const navItems = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/characters', label: 'RP Characters', icon: Users2 },
-    { to: '/playground', label: 'Live RP Chat', icon: MessageSquareCode, badge: 'Play' },
+    { to: '/playground', label: 'Live RP Chat', icon: MessageSquareCode, badge: 'Solo' },
+    { to: '/groups', label: 'Group RP Lounge', icon: Users, badge: 'Multi' },
     { to: '/discord', label: 'Discord Bot & Webhooks', icon: Bot, highlight: true },
     { to: '/ollama', label: 'Ollama Model Hub', icon: Server },
     { to: '/providers', label: 'LLM Providers', icon: Cpu },
@@ -41,7 +44,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
   return (
     <>
-      {/* Mobile Backdrop */}
       {isOpen && (
         <div
           onClick={onClose}
@@ -49,13 +51,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         />
       )}
 
-      {/* Sidebar Container */}
       <aside
         className={`fixed top-0 bottom-0 left-0 z-50 w-64 bg-zinc-950 border-r border-zinc-800/80 flex flex-col transition-transform duration-300 ease-in-out lg:translate-x-0 ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Brand Logo & Header */}
+        {/* Brand Header */}
         <div className="h-16 flex items-center justify-between px-5 border-b border-zinc-800/80 bg-zinc-950/90">
           <NavLink to="/" className="flex items-center gap-3 group" onClick={onClose}>
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center shadow-glow-violet group-hover:scale-105 transition-transform">
@@ -73,7 +74,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </NavLink>
         </div>
 
-        {/* Navigation Links */}
+        {/* Navigation */}
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
           <div className="px-3 pb-2 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
             Management

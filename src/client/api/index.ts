@@ -3,6 +3,10 @@ import {
   Character,
   ChatSession,
   ChatMessage,
+  GroupSession,
+  GroupMessage,
+  UserRelationship,
+  CharacterExpression,
   OllamaModelInfo,
   OllamaRunningModel,
   LLMProvider,
@@ -159,6 +163,29 @@ class ApiClient {
     });
   }
 
+  // Relationships
+  async getRelationships(characterId: string): Promise<{ relationships: UserRelationship[] }> {
+    return this.request<{ relationships: UserRelationship[] }>(`/characters/${characterId}/relationships`);
+  }
+
+  async addRelationship(characterId: string, data: Partial<UserRelationship>): Promise<{ relationship: UserRelationship }> {
+    return this.request<{ relationship: UserRelationship }>(`/characters/${characterId}/relationships`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateRelationship(relId: string, data: Partial<UserRelationship>): Promise<{ relationship: UserRelationship }> {
+    return this.request<{ relationship: UserRelationship }>(`/characters/relationships/${relId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteRelationship(relId: string): Promise<void> {
+    await this.request(`/characters/relationships/${relId}`, { method: 'DELETE' });
+  }
+
   // Chats
   async getChatSessions(characterId?: string): Promise<{ sessions: any[] }> {
     const q = characterId ? `?character_id=${encodeURIComponent(characterId)}` : '';
@@ -219,6 +246,49 @@ class ApiClient {
     return this.request(`/chats/${sessionId}/context-preview`);
   }
 
+  // Groups (Multi-Character Lounge)
+  async getGroupSessions(): Promise<{ groups: GroupSession[] }> {
+    return this.request<{ groups: GroupSession[] }>('/groups');
+  }
+
+  async createGroupSession(data: {
+    title?: string;
+    character_ids: string[];
+    scenario?: string;
+    user_persona_name?: string;
+  }): Promise<{ group: GroupSession }> {
+    return this.request<{ group: GroupSession }>('/groups', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getGroupSession(id: string): Promise<{ group: GroupSession; characters: Character[]; messages: GroupMessage[] }> {
+    return this.request<{ group: GroupSession; characters: Character[]; messages: GroupMessage[] }>(`/groups/${id}`);
+  }
+
+  async deleteGroupSession(id: string): Promise<void> {
+    await this.request(`/groups/${id}`, { method: 'DELETE' });
+  }
+
+  async sendGroupMessage(groupId: string, content: string, userPersonaName?: string): Promise<{ message: GroupMessage }> {
+    return this.request<{ message: GroupMessage }>(`/groups/${groupId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content, user_persona_name: userPersonaName }),
+    });
+  }
+
+  async triggerGroupTurn(groupId: string, characterId?: string): Promise<{
+    message: GroupMessage;
+    character: Character;
+    latencyMs: number;
+  }> {
+    return this.request<{ message: GroupMessage; character: Character; latencyMs: number }>(`/groups/${groupId}/turn`, {
+      method: 'POST',
+      body: JSON.stringify({ character_id: characterId }),
+    });
+  }
+
   // Ollama
   async getOllamaStatus(): Promise<{ online: boolean; latency_ms: number; host: string; version?: string; error?: string }> {
     return this.request('/ollama/status');
@@ -240,15 +310,11 @@ class ApiClient {
   }
 
   async unloadAllOllamaModels(): Promise<{ success: boolean; unloaded: number }> {
-    return this.request('/ollama/unload-all', {
-      method: 'POST',
-    });
+    return this.request('/ollama/unload-all', { method: 'POST' });
   }
 
   async deleteOllamaModel(model: string): Promise<{ success: boolean; message: string }> {
-    return this.request(`/ollama/models/${encodeURIComponent(model)}`, {
-      method: 'DELETE',
-    });
+    return this.request(`/ollama/models/${encodeURIComponent(model)}`, { method: 'DELETE' });
   }
 
   async pullOllamaModel(name: string): Promise<{ success: boolean; message: string }> {
