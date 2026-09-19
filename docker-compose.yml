@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: rp-man:latest
     container_name: rp-man
     restart: unless-stopped
     ports:
@@ -12,22 +13,22 @@ services:
       - PORT=3000
       - DATA_DIR=/app/data
       - OLLAMA_HOST=http://host.docker.internal:11434
-      # Optional default token
+      # Optional Discord Bot token (can also be configured via Web Control Panel)
       - DISCORD_BOT_TOKEN=
       - JWT_SECRET=change-this-to-a-secure-random-secret
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
     extra_hosts:
-      # Allows container on ZimaOS / Linux to connect to host's Ollama instance
+      # Allows container on ZimaOS / Linux / macOS to reach the host's Ollama instance
       - "host.docker.internal:host-gateway"
-    # Resource limits for low-power servers (e.g. ZimaOS, CasaOS, mini-PCs)
+    # Resource constraints tailored for low-power servers (e.g. ZimaOS, CasaOS, N100 mini-PCs)
     deploy:
       resources:
         limits:
           memory: 1024M
 
-  # Optional Ollama service (uncomment if you want Ollama managed inside the same compose)
+  # Optional Ollama container (uncomment if you want Ollama managed inside the same compose)
   # ollama:
   #   image: ollama/ollama:latest
   #   container_name: rp-man-ollama
