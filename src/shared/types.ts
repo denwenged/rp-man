@@ -114,6 +114,7 @@ export interface CharacterContextConfig {
   max_history_messages: number;
   enable_summary: boolean;
   enable_memory: boolean; // Toggle for Character Mind & Long-Term Memory
+  reinforce_system_prompt?: boolean; // Reinforce character persona at end of context for weak models
   summary_token_threshold: number;
   lorebook_ids: string[];
 }
@@ -315,6 +316,8 @@ export interface ServerSettings {
   default_context_tokens: number;
   max_context_tokens_hard_cap: number;
   enable_auto_summarize: boolean;
+  public_asset_url?: string; // e.g. "http://192.168.1.50:3000" or "https://rp.mydomain.com" for delivering images & Discord webhooks
+  weak_model_reinforce?: boolean; // Reinforce roleplay guidelines at end of context for small models (1B-8B)
   log_retention_days: number;
   app_name: string;
   app_theme: string;

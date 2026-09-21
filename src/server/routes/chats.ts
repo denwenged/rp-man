@@ -429,6 +429,10 @@ chatsRouter.get('/:id/context-preview', (req: AuthenticatedRequest, res: Respons
       systemPrompt: preview.systemPrompt,
       injectedLore: preview.injectedLore,
       summaryIncluded: preview.summaryIncluded,
+      activeRelationship: preview.activeRelationship,
+      knownRelationships: preview.knownRelationships,
+      recalledMemories: preview.recalledMemories,
+      recencyAnchor: preview.recencyAnchor,
       messageCount: preview.messages.length,
       messages: preview.messages
     });

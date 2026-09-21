@@ -599,7 +599,7 @@ export const ChatPlaygroundPage: React.FC = () => {
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
               <div className="flex items-center gap-2">
                 <Info className="w-5 h-5 text-brand-400" />
-                <h3 className="text-sm font-bold text-zinc-100">Context & Token Budget Inspector</h3>
+                <h3 className="text-sm font-bold text-zinc-100">Context, Lore & Mind Inspector</h3>
               </div>
               <button
                 onClick={() => setShowInspector(false)}
@@ -610,20 +610,63 @@ export const ChatPlaygroundPage: React.FC = () => {
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div className="p-3 bg-zinc-900 rounded-xl border border-zinc-800">
-                  <span className="text-[10px] uppercase font-bold text-zinc-400">Estimated Total Tokens</span>
+                  <span className="text-[10px] uppercase font-bold text-zinc-400">Estimated Tokens</span>
                   <p className="text-xl font-bold font-mono text-brand-300 mt-0.5">
                     {inspectorData.estimatedTokens}
                   </p>
                 </div>
                 <div className="p-3 bg-zinc-900 rounded-xl border border-zinc-800">
-                  <span className="text-[10px] uppercase font-bold text-zinc-400">Injected Lore Entries</span>
+                  <span className="text-[10px] uppercase font-bold text-zinc-400">Active Lore</span>
                   <p className="text-xl font-bold font-mono text-emerald-300 mt-0.5">
                     {inspectorData.injectedLore?.length || 0}
                   </p>
                 </div>
+                <div className="p-3 bg-zinc-900 rounded-xl border border-zinc-800">
+                  <span className="text-[10px] uppercase font-bold text-zinc-400">Recalled Memories</span>
+                  <p className="text-xl font-bold font-mono text-purple-300 mt-0.5">
+                    {inspectorData.recalledMemories?.length || 0}
+                  </p>
+                </div>
               </div>
+
+              {inspectorData.injectedLore && inspectorData.injectedLore.length > 0 && (
+                <div className="p-3 bg-emerald-950/20 border border-emerald-500/30 rounded-xl space-y-1">
+                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">
+                    Triggered Lore Entries:
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {inspectorData.injectedLore.map((item: string, i: number) => (
+                      <span key={i} className="text-[11px] bg-emerald-900/40 border border-emerald-500/30 text-emerald-200 px-2 py-0.5 rounded-lg">
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {inspectorData.activeRelationship && (
+                <div className="p-3 bg-rose-950/20 border border-rose-500/30 rounded-xl space-y-1">
+                  <span className="text-[10px] font-bold text-rose-400 uppercase tracking-wider block">
+                    Active Bond: {inspectorData.activeRelationship.relationship_type} (Affinity: {inspectorData.activeRelationship.affinity_level}/100)
+                  </span>
+                  <p className="text-zinc-300 text-[11px] italic">
+                    {inspectorData.activeRelationship.relationship_notes}
+                  </p>
+                </div>
+              )}
+
+              {inspectorData.recencyAnchor && (
+                <div className="p-3 bg-brand-950/20 border border-brand-500/30 rounded-xl space-y-1">
+                  <span className="text-[10px] font-bold text-brand-400 uppercase tracking-wider block">
+                    Recency Anchor (Weak Model Reinforcement):
+                  </span>
+                  <p className="text-zinc-300 text-[11px] font-mono leading-relaxed">
+                    {inspectorData.recencyAnchor}
+                  </p>
+                </div>
+              )}
 
               <div>
                 <h4 className="font-semibold text-zinc-300 uppercase tracking-wider text-[11px] mb-1.5">

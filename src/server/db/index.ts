@@ -275,6 +275,8 @@ function seedInitialData() {
       default_context_tokens: 4096,
       max_context_tokens_hard_cap: 8192,
       enable_auto_summarize: true,
+      public_asset_url: '',
+      weak_model_reinforce: true,
       log_retention_days: 7,
       app_name: 'RP-Man',
       app_theme: 'matte-dark'

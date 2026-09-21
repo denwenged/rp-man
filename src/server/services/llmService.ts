@@ -37,13 +37,15 @@ class LLMService {
     return {
       default_llm_provider: 'ollama',
       default_llm_model: 'llama3.2:3b',
-      ollama_host: 'http://127.0.0.1:11434',
+      ollama_host: process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
       ollama_default_keep_alive: '5m',
       max_concurrent_llm_requests: 1,
       llm_timeout_seconds: 90,
       default_context_tokens: 4096,
       max_context_tokens_hard_cap: 8192,
       enable_auto_summarize: true,
+      public_asset_url: '',
+      weak_model_reinforce: true,
       log_retention_days: 7,
       app_name: 'RP-Man',
       app_theme: 'matte-dark'
@@ -73,7 +75,7 @@ class LLMService {
       return {
         providerType: 'ollama',
         modelName: charModel || settings.default_llm_model || 'llama3.2:3b',
-        baseUrl: settings.ollama_host || 'http://127.0.0.1:11434',
+        baseUrl: settings.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
         apiKey: '',
         keepAlive
       };
@@ -93,15 +95,75 @@ class LLMService {
     return {
       providerType: 'ollama',
       modelName: 'llama3.2:3b',
-      baseUrl: 'http://127.0.0.1:11434',
+      baseUrl: settings.ollama_host || 'http://127.0.0.1:11434',
       apiKey: '',
       keepAlive: '5m'
     };
   }
 
+  /**
+   * Build smart stop sequences to prevent the AI from generating dialogue for the user
+   */
+  private buildStopSequences(
+    charName: string,
+    resolvedUserName: string,
+    userPersonaName: string,
+    customStop?: string[]
+  ): string[] {
+    const stopSet = new Set<string>(customStop || []);
+
+    const userNames = [resolvedUserName, userPersonaName, 'User', 'Human', 'user', 'human'].filter(Boolean);
+    for (const u of userNames) {
+      stopSet.add(`\n${u}:`);
+      stopSet.add(`\n${u} :`);
+      stopSet.add(`\n[${u}]`);
+      stopSet.add(`\n### ${u}`);
+      stopSet.add(`\n<|user|>`);
+      stopSet.add(`\n<|im_start|>user`);
+    }
+
+    return Array.from(stopSet);
+  }
+
+  /**
+   * Clean output of any leaked user dialogue or impersonation attempts by weak models
+   */
+  private sanitizeOutput(
+    text: string,
+    charName: string,
+    resolvedUserName: string,
+    userPersonaName: string
+  ): string {
+    if (!text) return '';
+    let result = text;
+
+    const userNames = [resolvedUserName, userPersonaName, 'User', 'Human'].filter(Boolean);
+    for (const u of userNames) {
+      const patterns = [
+        `\n${u}:`,
+        `\n${u} :`,
+        `\n[${u}]`,
+        `\n### ${u}`,
+        `\n<|user|>`,
+        `\n<|im_start|>user`
+      ];
+
+      for (const p of patterns) {
+        const idx = result.indexOf(p);
+        if (idx !== -1) {
+          result = result.substring(0, idx).trim();
+        }
+      }
+    }
+
+    return result;
+  }
+
   public async generate(options: GenerateOptions): Promise<GenerateResult> {
     const { character, userPersonaName, discordUserId, history, rollingSummary, onToken, priority = 3 } = options;
     const settings = this.getServerSettings();
+
+    const resolvedUserName = ContextManager.getUserPreferredName(discordUserId || '', userPersonaName || 'User');
 
     const context = ContextManager.buildContext(
       character,
@@ -115,10 +177,36 @@ class LLMService {
     const resolved = this.resolveProvider(character);
     const params = character.model_config?.parameters || {};
 
+    // Prepare context messages with optional recency reinforcement for weak models
+    const enableReinforce = character.context_config?.reinforce_system_prompt !== false &&
+                           settings.weak_model_reinforce !== false;
+
+    const messagesToSend = [...context.messages];
+    if (enableReinforce && context.recencyAnchor && messagesToSend.length > 0) {
+      const lastIdx = messagesToSend.length - 1;
+      const lastMsg = messagesToSend[lastIdx];
+      if (lastMsg.role === 'user') {
+        messagesToSend[lastIdx] = {
+          role: 'user',
+          content: `${lastMsg.content}\n\n${context.recencyAnchor}`
+        };
+      }
+    }
+
+    const stopSequences = this.buildStopSequences(
+      character.name,
+      resolvedUserName,
+      userPersonaName,
+      params.stop
+    );
+
     const relNote = context.activeRelationship ? ` [Rel: ${context.activeRelationship.relationship_type}]` : '';
+    const memNote = context.recalledMemories && context.recalledMemories.length > 0 ? ` [${context.recalledMemories.length} Memories]` : '';
+    const loreNote = context.injectedLore && context.injectedLore.length > 0 ? ` [${context.injectedLore.length} Lore]` : '';
+
     logger.info(
       'LLM',
-      `Prompting [${character.name}]${relNote} via ${resolved.providerType} (${resolved.modelName}) - Est. Input Tokens: ${context.estimatedTokens}`
+      `Prompting [${character.name}]${relNote}${memNote}${loreNote} via ${resolved.providerType} (${resolved.modelName}) - Est. Input Tokens: ${context.estimatedTokens}`
     );
 
     const startTime = Date.now();
@@ -127,23 +215,42 @@ class LLMService {
       async () => {
         let rawText = '';
 
+        const payloadContext: FormattedPromptPayload = {
+          ...context,
+          messages: messagesToSend
+        };
+
+        const effectiveParams: ModelParameters = {
+          ...params,
+          stop: stopSequences
+        };
+
         if (resolved.providerType === 'ollama') {
-          rawText = await this.callOllama(resolved, context, params, onToken);
+          rawText = await this.callOllama(resolved, payloadContext, effectiveParams, onToken);
         } else if (resolved.providerType === 'anthropic') {
-          rawText = await this.callAnthropic(resolved, context, params, onToken);
+          rawText = await this.callAnthropic(resolved, payloadContext, effectiveParams, onToken);
         } else {
-          rawText = await this.callOpenAICompatible(resolved, context, params, onToken);
+          rawText = await this.callOpenAICompatible(resolved, payloadContext, effectiveParams, onToken);
         }
 
         const latencyMs = Date.now() - startTime;
-        const parsedExp = ContextManager.parseExpression(rawText, character);
-        const tokensUsed = context.estimatedTokens + ContextManager.estimateTokens(rawText);
+
+        // Sanitize output to remove any leaked user dialogue
+        const sanitized = this.sanitizeOutput(
+          rawText,
+          character.name,
+          resolvedUserName,
+          userPersonaName
+        );
+
+        const parsedExp = ContextManager.parseExpression(sanitized, character);
+        const tokensUsed = context.estimatedTokens + ContextManager.estimateTokens(sanitized);
 
         logger.info('LLM', `Completed generation for [${character.name}] in ${latencyMs}ms (${tokensUsed} est. tokens)`);
 
         return {
-          text: rawText.trim(),
-          cleanText: parsedExp.cleanText || rawText.trim(),
+          text: sanitized.trim(),
+          cleanText: parsedExp.cleanText || sanitized.trim(),
           expression: parsedExp.expression,
           expressionEmoji: parsedExp.expressionEmoji,
           expressionAvatar: parsedExp.expressionAvatar || character.avatar_url,

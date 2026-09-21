@@ -9,7 +9,9 @@ export interface FormattedPromptPayload {
   injectedLore: string[];
   summaryIncluded: boolean;
   activeRelationship?: UserRelationship | null;
+  knownRelationships?: UserRelationship[];
   recalledMemories?: CharacterMemory[];
+  recencyAnchor?: string;
 }
 
 export class ContextManager {
@@ -59,104 +61,84 @@ export class ContextManager {
   }
 
   /**
-   * Find relationship between character and user
+   * Normalize text for fuzzy keyword and trigger matching
    */
-  public static findRelationship(characterId: string, userIdentifier: string): UserRelationship | null {
-    if (!userIdentifier) return null;
-    try {
-      const row = db.prepare(`
-        SELECT * FROM user_relationships 
-        WHERE character_id = ? AND (LOWER(user_identifier) = LOWER(?) OR user_identifier = ?)
-        LIMIT 1
-      `).get(characterId, userIdentifier, userIdentifier) as any;
-
-      if (row) {
-        return {
-          id: row.id,
-          character_id: row.character_id,
-          user_identifier: row.user_identifier,
-          relationship_type: row.relationship_type,
-          relationship_notes: row.relationship_notes,
-          affinity_level: row.affinity_level,
-          created_at: row.created_at,
-          updated_at: row.updated_at
-        };
-      }
-    } catch (e) {
-      logger.error('SYSTEM', 'Failed to query user relationship', e);
-    }
-    return null;
+  private static normalizeForMatching(text: string): string {
+    return ` ${text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')} `;
   }
 
   /**
-   * Retrieve recalled long-term memories / mind notes for a specific user
+   * Check if a list of keys triggers in the text
    */
-  public static getCharacterMemories(characterId: string, userIdentifier: string, userName?: string): CharacterMemory[] {
-    if (!userIdentifier && !userName) return [];
-    try {
-      const rows = db.prepare(`
-        SELECT * FROM character_memories 
-        WHERE character_id = ? AND (user_identifier = ? OR LOWER(user_identifier) = LOWER(?) OR LOWER(user_display_name) = LOWER(?))
-        ORDER BY updated_at DESC
-        LIMIT 12
-      `).all(characterId, userIdentifier || '', userName || '', userName || '') as any[];
-
-      return rows.map(r => ({
-        id: r.id,
-        character_id: r.character_id,
-        user_identifier: r.user_identifier,
-        user_display_name: r.user_display_name,
-        memory_text: r.memory_text,
-        category: r.category || 'fact',
-        created_at: r.created_at,
-        updated_at: r.updated_at
-      }));
-    } catch (e) {
-      logger.error('SYSTEM', 'Failed to load character memories', e);
-      return [];
+  private static matchKeysInText(rawKeys: string[], normalizedText: string): boolean {
+    // Flatten keys in case user entered comma-separated words in a single key string
+    const flatKeys: string[] = [];
+    for (const k of rawKeys) {
+      if (typeof k === 'string') {
+        k.split(',').forEach(sub => {
+          const clean = sub.trim().toLowerCase();
+          if (clean) flatKeys.push(clean);
+        });
+      }
     }
+
+    return flatKeys.some(key => {
+      if (key.length <= 2) {
+        // Strict word boundary for very short keys
+        const regex = new RegExp(`\\b${key}\\b`, 'i');
+        return regex.test(normalizedText);
+      }
+      return normalizedText.includes(key);
+    });
   }
 
   /**
    * Scan text for matching lorebook entries
+   * Falls back to all active lorebooks if none specifically bound to character
    */
   public static findMatchingLore(
     character: Character,
     recentText: string
   ): { entries: LoreEntry[]; matchedKeys: string[] } {
-    const lorebookIds = character.context_config?.lorebook_ids || [];
+    let lorebookIds = character.context_config?.lorebook_ids || [];
+    
+    // If character has no explicit lorebooks selected, fetch all active lorebooks in database
+    if (lorebookIds.length === 0) {
+      try {
+        const allBooks = db.prepare('SELECT id FROM lorebooks').all() as Array<{ id: string }>;
+        lorebookIds = allBooks.map(b => b.id);
+      } catch (e) {
+        lorebookIds = [];
+      }
+    }
+
     if (lorebookIds.length === 0) {
       return { entries: [], matchedKeys: [] };
     }
 
     const matchedEntries: LoreEntry[] = [];
     const matchedKeys: string[] = [];
-    const normalizedText = ` ${recentText.toLowerCase()} `;
+    const combinedScanText = `${recentText}\n${character.scenario || ''}\n${character.system_prompt || ''}`;
+    const normalizedText = this.normalizeForMatching(combinedScanText);
 
     for (const bookId of lorebookIds) {
       try {
         const rows = db.prepare('SELECT * FROM lore_entries WHERE lorebook_id = ? AND enabled = 1 ORDER BY priority DESC, order_index ASC').all(bookId) as any[];
         
         for (const row of rows) {
-          const keys: string[] = JSON.parse(row.keys || '[]');
-          const secondaryKeys: string[] = JSON.parse(row.secondary_keys || '[]');
+          const rawKeys: string[] = JSON.parse(row.keys || '[]');
+          const rawSecondaryKeys: string[] = JSON.parse(row.secondary_keys || '[]');
           const constant = Boolean(row.constant);
           const selective = Boolean(row.selective);
 
           let isMatch = constant;
 
-          if (!isMatch && keys.length > 0) {
-            const hasPrimaryKey = keys.some(k => {
-              const cleaned = k.trim().toLowerCase();
-              return cleaned && normalizedText.includes(cleaned);
-            });
+          if (!isMatch && rawKeys.length > 0) {
+            const hasPrimaryKey = this.matchKeysInText(rawKeys, normalizedText);
 
             if (hasPrimaryKey) {
-              if (selective && secondaryKeys.length > 0) {
-                const hasSecondaryKey = secondaryKeys.some(sk => {
-                  const cleaned = sk.trim().toLowerCase();
-                  return cleaned && normalizedText.includes(cleaned);
-                });
+              if (selective && rawSecondaryKeys.length > 0) {
+                const hasSecondaryKey = this.matchKeysInText(rawSecondaryKeys, normalizedText);
                 isMatch = hasSecondaryKey;
               } else {
                 isMatch = true;
@@ -165,20 +147,23 @@ export class ContextManager {
           }
 
           if (isMatch) {
-            matchedEntries.push({
-              id: row.id,
-              lorebook_id: row.lorebook_id,
-              keys,
-              secondary_keys: secondaryKeys,
-              content: row.content,
-              comment: row.comment,
-              enabled: Boolean(row.enabled),
-              constant,
-              selective,
-              priority: row.priority,
-              order: row.order_index
-            });
-            matchedKeys.push(...keys);
+            // Avoid duplicates
+            if (!matchedEntries.some(e => e.id === row.id)) {
+              matchedEntries.push({
+                id: row.id,
+                lorebook_id: row.lorebook_id,
+                keys: rawKeys,
+                secondary_keys: rawSecondaryKeys,
+                content: row.content,
+                comment: row.comment,
+                enabled: Boolean(row.enabled),
+                constant,
+                selective,
+                priority: row.priority,
+                order: row.order_index
+              });
+              matchedKeys.push(...rawKeys);
+            }
           }
         }
       } catch (e) {
@@ -187,6 +172,133 @@ export class ContextManager {
     }
 
     return { entries: matchedEntries, matchedKeys };
+  }
+
+  /**
+   * Retrieve character relationships:
+   * 1. Active interlocutor relationship (with currently speaking user)
+   * 2. Known relationships / social circle (so the bot knows other people when asked)
+   */
+  public static getCharacterRelationships(
+    characterId: string,
+    userIdentifier: string,
+    resolvedUserName: string
+  ): { active: UserRelationship | null; known: UserRelationship[] } {
+    try {
+      const rows = db.prepare('SELECT * FROM user_relationships WHERE character_id = ?').all(characterId) as any[];
+      if (!rows || rows.length === 0) {
+        return { active: null, known: [] };
+      }
+
+      const allRels: UserRelationship[] = rows.map(r => ({
+        id: r.id,
+        character_id: r.character_id,
+        user_identifier: r.user_identifier,
+        relationship_type: r.relationship_type,
+        relationship_notes: r.relationship_notes,
+        affinity_level: r.affinity_level,
+        created_at: r.created_at,
+        updated_at: r.updated_at
+      }));
+
+      // Find active relationship
+      const active = allRels.find(r => 
+        (userIdentifier && (r.user_identifier === userIdentifier || r.user_identifier.toLowerCase() === userIdentifier.toLowerCase())) ||
+        (resolvedUserName && r.user_identifier.toLowerCase() === resolvedUserName.toLowerCase())
+      ) || null;
+
+      // Other known relationships in character's social circle
+      const known = allRels.filter(r => r.id !== active?.id);
+
+      return { active, known };
+    } catch (e) {
+      logger.error('SYSTEM', 'Failed to retrieve character relationships', e);
+      return { active: null, known: [] };
+    }
+  }
+
+  /**
+   * Smart Memory Retrieval (Character Mind):
+   * 1. Direct memories about the active interlocutor
+   * 2. Global / Shared memories for this character
+   * 3. Smart-recalled memories across ALL chatters triggered by mentioned names or keywords in conversation
+   */
+  public static getSmartCharacterMemories(
+    characterId: string,
+    userIdentifier: string,
+    resolvedUserName: string,
+    recentConversationText: string
+  ): CharacterMemory[] {
+    try {
+      const allRows = db.prepare(`
+        SELECT * FROM character_memories 
+        WHERE character_id = ?
+        ORDER BY updated_at DESC
+      `).all(characterId) as any[];
+
+      if (!allRows || allRows.length === 0) return [];
+
+      const normalizedChat = this.normalizeForMatching(recentConversationText);
+      const matchedMap = new Map<string, CharacterMemory>();
+
+      for (const r of allRows) {
+        const mem: CharacterMemory = {
+          id: r.id,
+          character_id: r.character_id,
+          user_identifier: r.user_identifier,
+          user_display_name: r.user_display_name,
+          memory_text: r.memory_text,
+          category: r.category || 'fact',
+          created_at: r.created_at,
+          updated_at: r.updated_at
+        };
+
+        const memUser = (r.user_identifier || '').toLowerCase();
+        const memName = (r.user_display_name || '').toLowerCase();
+        const activeId = (userIdentifier || '').toLowerCase();
+        const activeName = (resolvedUserName || '').toLowerCase();
+
+        // 1. Direct match with current active speaker
+        const isSpeakerMemory = 
+          (activeId && memUser === activeId) ||
+          (activeName && (memName === activeName || memUser === activeName));
+
+        // 2. Global / Shared memory
+        const isGlobal = memUser === 'global' || memUser === 'all' || memUser === 'shared' || !memUser;
+
+        // 3. Smart Mention / Keyword Recall
+        let isSmartTriggered = false;
+        if (!isSpeakerMemory && !isGlobal) {
+          // Check if memory subject's name is mentioned in chat
+          if (memName && memName.length >= 2 && normalizedChat.includes(` ${memName} `)) {
+            isSmartTriggered = true;
+          }
+
+          // Check if key distinctive nouns/words from the memory (length >= 4) match the conversation
+          if (!isSmartTriggered && r.memory_text) {
+            const words = r.memory_text
+              .toLowerCase()
+              .replace(/[^a-z0-9\s]/g, ' ')
+              .split(/\s+/)
+              .filter((w: string) => w.length >= 4 && !['that', 'with', 'from', 'this', 'have', 'were', 'they', 'your', 'been', 'some'].includes(w));
+
+            const matchCount = words.filter((w: string) => normalizedChat.includes(w)).length;
+            if (matchCount >= 2 || (words.length > 0 && matchCount >= 1 && words.some((w: string) => w.length >= 6 && normalizedChat.includes(w)))) {
+              isSmartTriggered = true;
+            }
+          }
+        }
+
+        if (isSpeakerMemory || isGlobal || isSmartTriggered) {
+          matchedMap.set(mem.id, mem);
+        }
+      }
+
+      return Array.from(matchedMap.values()).slice(0, 15);
+    } catch (e) {
+      logger.error('SYSTEM', 'Failed to retrieve smart character memories', e);
+      return [];
+    }
   }
 
   /**
@@ -260,27 +372,30 @@ export class ContextManager {
     // Resolve preferred nickname if available
     const resolvedUserName = this.getUserPreferredName(discordUserId || '', userPersonaName || 'User');
 
-    // 1. Lorebook Matching
-    const recentMessagesText = history.slice(-5).map(m => m.content).join('\n');
+    // 1. Lorebook Matching (scans recent 8 messages + scenario + prompt)
+    const recentMessagesText = history.slice(-8).map(m => m.content).join('\n');
     const { entries: matchedLore, matchedKeys } = this.findMatchingLore(character, recentMessagesText);
 
-    // 2. User Relationship lookup (checks persona name or discord user ID)
-    const relationship = this.findRelationship(character.id, discordUserId || '') ||
-                         this.findRelationship(character.id, resolvedUserName);
+    // 2. User Relationships (Active bond + Known social circle)
+    const { active: activeRelationship, known: knownRelationships } = this.getCharacterRelationships(
+      character.id,
+      discordUserId || '',
+      resolvedUserName
+    );
 
-    // 3. Recalled Memories (Character Mind)
+    // 3. Smart Recalled Memories (Character Mind)
     const enableMemory = character.context_config?.enable_memory !== false;
     const recalledMemories = enableMemory
-      ? this.getCharacterMemories(character.id, discordUserId || '', resolvedUserName)
+      ? this.getSmartCharacterMemories(character.id, discordUserId || '', resolvedUserName, recentMessagesText)
       : [];
 
     // 4. Build System Prompt Sections
     const promptSections: string[] = [];
 
-    // Explicit Roleplay Framing to prevent AI self-confusion
+    // Explicit Roleplay Framing to prevent AI self-confusion and persona loss
     promptSections.push(
       `[CRITICAL ROLEPLAY INSTRUCTIONS & PERSPECTIVE]\n` +
-      `• You are ${charName}. You must NEVER speak for, impersonate, or roleplay as "${resolvedUserName}".\n` +
+      `• You are ${charName}. You must NEVER speak for, narrate actions for, or roleplay as "${resolvedUserName}".\n` +
       `• The user you are conversing with is "${resolvedUserName}".\n` +
       `• Address "${resolvedUserName}" directly by name or natural title when speaking to them.\n` +
       `• Respond strictly from the perspective of ${charName} using standard roleplay notation (*actions/thoughts in asterisks*, "spoken dialogue in quotes").\n` +
@@ -307,23 +422,55 @@ export class ContextManager {
       promptSections.push(`[Current Scene / Setting]\n${this.replaceMacros(character.scenario, charName, resolvedUserName, character.scenario)}`);
     }
 
-    // Dynamic User Relationship Directives
-    if (relationship) {
+    // Active Speaker Bond Directives
+    if (activeRelationship) {
       promptSections.push(
-        `[Your Bond & Relationship with "${resolvedUserName}"]\n` +
-        `• Relationship: ${relationship.relationship_type} (Affinity Level: ${relationship.affinity_level}/100)\n` +
-        `• Directives: ${this.replaceMacros(relationship.relationship_notes, charName, resolvedUserName)}`
+        `[Your Bond & Relationship with Active Speaker: "${resolvedUserName}"]\n` +
+        `• Role: ${activeRelationship.relationship_type} (Affinity Level: ${activeRelationship.affinity_level}/100)\n` +
+        `• Directives: ${this.replaceMacros(activeRelationship.relationship_notes, charName, resolvedUserName)}`
+      );
+    }
+
+    // Known Social Circle & Relationships (shared awareness)
+    if (knownRelationships.length > 0) {
+      const relLines = knownRelationships.map(r => {
+        const name = r.user_identifier;
+        return `• ${name} (${r.relationship_type}, Affinity ${r.affinity_level}/100): ${this.replaceMacros(r.relationship_notes, charName, resolvedUserName)}`;
+      }).join('\n');
+
+      promptSections.push(
+        `[Known Relationships & Social Circle]\n` +
+        `*(You are familiar with these individuals. If "${resolvedUserName}" or others ask about them or mention them, stay in character and reflect these bonds accurately:)*\n` +
+        `${relLines}`
       );
     }
 
     // Character Mind / Long-Term Recalled Memories
     if (recalledMemories.length > 0) {
-      const memoryLines = recalledMemories.map(m => `• ${m.memory_text}`).join('\n');
+      const memoryLines = recalledMemories.map(m => {
+        const originTag = m.user_display_name ? ` [About: ${m.user_display_name}]` : '';
+        return `• ${m.memory_text}${originTag}`;
+      }).join('\n');
+
       promptSections.push(
-        `[Character's Long-Term Memory & Notes About "${resolvedUserName}"]\n` +
+        `[Character's Long-Term Recalled Memories & Known Facts]\n` +
         `${memoryLines}\n` +
-        `*(You recall these details naturally from previous interactions with ${resolvedUserName}. Reference them when appropriate.)*`
+        `*(You recall these details naturally from past interactions and experiences. Seamlessly reference these facts whenever relevant.)*`
       );
+    }
+
+    // Injected World Lore (High-authority framing for weak models)
+    const injectedLoreTexts: string[] = [];
+    if (matchedLore.length > 0) {
+      const loreBlock = matchedLore
+        .map(entry => `• ${this.replaceMacros(entry.content, charName, resolvedUserName)}`)
+        .join('\n');
+      promptSections.push(
+        `[ACTIVE WORLD LORE & CANONICAL KNOWLEDGE]\n` +
+        `You have absolute canonical knowledge of the following world lore. Seamlessly weave these facts, lore details, secrets, and world mechanics into your speech and actions:\n` +
+        `${loreBlock}`
+      );
+      injectedLoreTexts.push(...matchedLore.map(e => e.comment || e.keys.join(', ')));
     }
 
     // Emotion Expression Directive
@@ -337,16 +484,6 @@ export class ContextManager {
     // Example Dialogues
     if (character.mes_example?.trim()) {
       promptSections.push(`[Dialogue Examples]\n${this.replaceMacros(character.mes_example, charName, resolvedUserName)}`);
-    }
-
-    // Injected World Lore
-    const injectedLoreTexts: string[] = [];
-    if (matchedLore.length > 0) {
-      const loreBlock = matchedLore
-        .map(entry => this.replaceMacros(entry.content, charName, resolvedUserName))
-        .join('\n');
-      promptSections.push(`[World Lore / Background Information]\n${loreBlock}`);
-      injectedLoreTexts.push(...matchedLore.map(e => e.comment || e.keys.join(', ')));
     }
 
     // Rolling Summary
@@ -393,6 +530,9 @@ export class ContextManager {
       currentHistoryTokens += msgTokens;
     }
 
+    // Recency Anchor for weak models (enforces character roleplay at the very end of context)
+    const recencyAnchor = `[System Directive: Respond strictly as ${charName} speaking to "${resolvedUserName}". Stay authentic to your character. Use asterisks for actions (*action*) and quotes for dialogue ("dialogue"). Do NOT write dialogue or actions for "${resolvedUserName}".]`;
+
     const totalEstimatedTokens = systemPromptTokens + currentHistoryTokens;
 
     return {
@@ -401,8 +541,10 @@ export class ContextManager {
       estimatedTokens: totalEstimatedTokens,
       injectedLore: injectedLoreTexts,
       summaryIncluded,
-      activeRelationship: relationship,
-      recalledMemories
+      activeRelationship: activeRelationship,
+      knownRelationships: knownRelationships,
+      recalledMemories,
+      recencyAnchor
     };
   }
 }

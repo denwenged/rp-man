@@ -95,10 +95,22 @@ systemRouter.post('/upload', authMiddleware, upload.single('image'), (req: Authe
     return res.status(400).json({ error: 'No image file uploaded' });
   }
 
-  const fileUrl = `/api/system/uploads/${req.file.filename}`;
+  let publicAssetUrl = '';
+  try {
+    const row = db.prepare('SELECT config FROM server_settings WHERE id = ?').get('global') as any;
+    if (row) {
+      const parsed = JSON.parse(row.config);
+      publicAssetUrl = (parsed.public_asset_url || '').trim().replace(/\/+$/, '');
+    }
+  } catch (e) {}
+
+  const relativePath = `/uploads/${req.file.filename}`;
+  const fileUrl = publicAssetUrl ? `${publicAssetUrl}${relativePath}` : relativePath;
+
   return res.json({
     success: true,
     url: fileUrl,
+    relative_url: relativePath,
     filename: req.file.filename
   });
 });

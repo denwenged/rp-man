@@ -692,6 +692,28 @@ class DiscordService {
     } catch (e) {}
   }
 
+  private resolvePublicAvatarUrl(rawAvatar?: string): string | undefined {
+    if (!rawAvatar || !rawAvatar.trim()) return undefined;
+    const trimmed = rawAvatar.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+
+    try {
+      const row = db.prepare('SELECT config FROM server_settings WHERE id = ?').get('global') as any;
+      if (row) {
+        const parsed = JSON.parse(row.config);
+        const publicBase = (parsed.public_asset_url || '').trim().replace(/\/+$/, '');
+        if (publicBase) {
+          const cleanPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+          return `${publicBase}${cleanPath}`;
+        }
+      }
+    } catch (e) {}
+
+    return undefined;
+  }
+
   private async deliverCharacterResponse(
     channel: any,
     character: Character,
@@ -701,11 +723,12 @@ class DiscordService {
   ) {
     const config = this.getConfig();
     const chunks = this.splitMessage(responseText, config.max_response_length || 1900);
-    const avatar = customAvatarUrl || character.avatar_url;
+    const rawAvatar = customAvatarUrl || character.avatar_url;
+    const publicAvatar = this.resolvePublicAvatarUrl(rawAvatar);
 
     if (character.discord_config?.webhook_url) {
       for (const chunk of chunks) {
-        await this.sendViaDirectWebhook(character.discord_config.webhook_url, character.name, avatar, chunk);
+        await this.sendViaDirectWebhook(character.discord_config.webhook_url, character.name, publicAvatar || '', chunk);
       }
       return;
     }
@@ -718,7 +741,7 @@ class DiscordService {
             await webhook.send({
               content: chunk,
               username: character.name,
-              avatarURL: avatar || undefined,
+              avatarURL: publicAvatar,
               threadId: channel.isThread() ? channel.id : undefined
             });
           }
@@ -771,10 +794,11 @@ class DiscordService {
 
   public async sendViaDirectWebhook(webhookUrl: string, username: string, avatarUrl: string, content: string): Promise<boolean> {
     try {
+      const publicAvatar = this.resolvePublicAvatarUrl(avatarUrl);
       await axios.post(webhookUrl, {
         content,
         username,
-        avatar_url: avatarUrl || undefined
+        avatar_url: publicAvatar || undefined
       });
       return true;
     } catch (e: any) {

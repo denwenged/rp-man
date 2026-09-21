@@ -36,6 +36,7 @@ export const CharacterEditorPage: React.FC = () => {
   const [installedModels, setInstalledModels] = useState<OllamaModelInfo[]>([]);
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const expressionAvatarInputRef = useRef<HTMLInputElement>(null);
   const { success, error, info } = useToast();
   const navigate = useNavigate();
 
@@ -86,6 +87,7 @@ export const CharacterEditorPage: React.FC = () => {
       max_history_messages: 16,
       enable_summary: true,
       enable_memory: true,
+      reinforce_system_prompt: true,
       summary_token_threshold: 3000,
       lorebook_ids: []
     }
@@ -112,6 +114,7 @@ export const CharacterEditorPage: React.FC = () => {
   const [memUserName, setMemUserName] = useState('');
   const [memText, setMemText] = useState('');
   const [memCategory, setMemCategory] = useState('fact');
+  const [memorySearch, setMemorySearch] = useState('');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -191,6 +194,22 @@ export const CharacterEditorPage: React.FC = () => {
       const res = await api.uploadImage(formData);
       setCharacter(prev => ({ ...prev, avatar_url: res.url }));
       success('Avatar image uploaded successfully!');
+    } catch (e: any) {
+      error(`Upload failed: ${e.message}`);
+    }
+  };
+
+  const handleExpressionAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    try {
+      const res = await api.uploadImage(formData);
+      setNewExpAvatar(res.url);
+      success('Expression avatar uploaded!');
     } catch (e: any) {
       error(`Upload failed: ${e.message}`);
     }
@@ -738,14 +757,31 @@ export const CharacterEditorPage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Expression Avatar URL</label>
-                  <input
-                    type="text"
-                    value={newExpAvatar}
-                    onChange={e => setNewExpAvatar(e.target.value)}
-                    placeholder="https://... (or image URL)"
-                    className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500"
-                  />
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">Expression Avatar</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={newExpAvatar}
+                      onChange={e => setNewExpAvatar(e.target.value)}
+                      placeholder="Image URL or upload..."
+                      className="flex-1 px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500"
+                    />
+                    <input
+                      type="file"
+                      ref={expressionAvatarInputRef}
+                      onChange={handleExpressionAvatarUpload}
+                      accept="image/*"
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => expressionAvatarInputRef.current?.click()}
+                      className="px-2.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-semibold shrink-0 flex items-center gap-1"
+                      title="Upload expression image"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -900,7 +936,7 @@ export const CharacterEditorPage: React.FC = () => {
               <div className="text-xs text-zinc-300 leading-relaxed">
                 <strong className="text-purple-300 font-semibold">Character Long-Term Mind & Recalled Memory:</strong>
                 <p className="mt-0.5">
-                  The character maintains a persistent mind of key facts, preferences, and events learned about users over time. You can view, add, modify, or delete memories stored for any individual user.
+                  The character maintains a persistent mind of key facts, preferences, and events learned about users over time. Stored memories are smartly shared and recalled whenever users or topics are mentioned across conversations.
                 </p>
               </div>
             </div>
@@ -922,11 +958,20 @@ export const CharacterEditorPage: React.FC = () => {
               />
             </div>
 
-            {/* Saved Memories List */}
-            <div>
-              <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-3">
-                Saved User Memories & Notes ({(character.memories || []).length})
-              </h3>
+            {/* Saved Memories List with Search */}
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider">
+                  Saved Memories & Facts ({(character.memories || []).length})
+                </h3>
+                <input
+                  type="text"
+                  value={memorySearch}
+                  onChange={e => setMemorySearch(e.target.value)}
+                  placeholder="Search memories or user names..."
+                  className="px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-purple-500 w-full sm:w-64"
+                />
+              </div>
 
               {(character.memories || []).length === 0 ? (
                 <div className="text-center py-8 bg-zinc-900/40 rounded-xl border border-zinc-800 text-zinc-500 text-xs">
@@ -934,67 +979,95 @@ export const CharacterEditorPage: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-2.5">
-                  {(character.memories || []).map(mem => (
-                    <div
-                      key={mem.id}
-                      className="p-3 bg-zinc-900/70 border border-zinc-800 rounded-xl flex items-center justify-between gap-3 text-xs"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-bold text-zinc-200">{mem.user_display_name || mem.user_identifier}</span>
-                          <span className="text-[10px] font-mono text-zinc-500">ID: {mem.user_identifier}</span>
-                          <span className="text-[10px] text-zinc-500 font-mono">
-                            {new Date(mem.updated_at || mem.created_at).toLocaleDateString()}
-                          </span>
+                  {(character.memories || [])
+                    .filter(m => {
+                      if (!memorySearch.trim()) return true;
+                      const q = memorySearch.toLowerCase();
+                      return (
+                        (m.user_display_name || '').toLowerCase().includes(q) ||
+                        (m.user_identifier || '').toLowerCase().includes(q) ||
+                        (m.memory_text || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map(mem => (
+                      <div
+                        key={mem.id}
+                        className="p-3 bg-zinc-900/70 border border-zinc-800 rounded-xl flex items-center justify-between gap-3 text-xs"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-bold text-zinc-200">{mem.user_display_name || mem.user_identifier}</span>
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${mem.user_identifier === 'global' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'text-zinc-500'}`}>
+                              {mem.user_identifier === 'global' ? '🌐 Global Fact' : `ID: ${mem.user_identifier}`}
+                            </span>
+                            <span className="text-[10px] text-zinc-500 font-mono">
+                              {new Date(mem.updated_at || mem.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <p className="text-zinc-300 italic bg-zinc-950/60 px-2.5 py-1.5 rounded-lg border border-zinc-850">
+                            {mem.memory_text}
+                          </p>
                         </div>
-                        <p className="text-zinc-300 italic bg-zinc-950/60 px-2.5 py-1.5 rounded-lg border border-zinc-850">
-                          {mem.memory_text}
-                        </p>
-                      </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          onClick={() => handleClearUserMemories(mem.user_identifier)}
-                          className="px-2 py-1 text-[11px] text-zinc-400 hover:text-amber-400 hover:bg-zinc-800 rounded-lg border border-zinc-800"
-                          title="Clear all memories for this user"
-                        >
-                          Wipe User
-                        </button>
-                        <button
-                          onClick={() => handleDeleteMemory(mem.id)}
-                          className="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg"
-                          title="Delete memory"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {mem.user_identifier !== 'global' && (
+                            <button
+                              onClick={() => handleClearUserMemories(mem.user_identifier)}
+                              className="px-2 py-1 text-[11px] text-zinc-400 hover:text-amber-400 hover:bg-zinc-800 rounded-lg border border-zinc-800"
+                              title="Clear all memories for this user"
+                            >
+                              Wipe User
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteMemory(mem.id)}
+                            className="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg"
+                            title="Delete memory"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               )}
             </div>
 
             {/* Add Memory Note Manually */}
             <div className="p-4 bg-zinc-900/60 rounded-2xl border border-zinc-800 space-y-4">
-              <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-2">
-                <Plus className="w-4 h-4 text-purple-400" />
-                <span>Add Memory Note to Character Mind</span>
-              </h4>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-purple-400" />
+                  <span>Add Memory Note to Character Mind</span>
+                </h4>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMemUserId('global');
+                      setMemUserName('Global Fact (All Users)');
+                    }}
+                    className="px-2.5 py-1 text-[11px] bg-purple-950/50 hover:bg-purple-900/50 text-purple-300 border border-purple-500/30 rounded-lg font-medium"
+                  >
+                    Set as Global Shared Fact
+                  </button>
+                </div>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">User Identifier (Discord ID or Username) *</label>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">User Identifier (Discord ID, Username, or 'global') *</label>
                   <input
                     type="text"
                     value={memUserId}
                     onChange={e => setMemUserId(e.target.value)}
-                    placeholder="e.g. 123456789012 or Joshua"
+                    placeholder="e.g. 123456789012, Joshua, or global"
                     className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 focus:outline-none focus:border-brand-500 font-mono"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-zinc-400 mb-1">User Display Name (Optional)</label>
+                  <label className="block text-xs font-semibold text-zinc-400 mb-1">User Display Name / Label</label>
                   <input
                     type="text"
                     value={memUserName}
@@ -1105,9 +1178,130 @@ export const CharacterEditorPage: React.FC = () => {
           </div>
         )}
 
-        {/* ==================== TAB 6: CONTEXT ==================== */}
+        {/* ==================== TAB 6: CONTEXT & MEMORY TUNING ==================== */}
         {activeTab === 'context' && (
           <div className="space-y-6">
+            {/* World Books & Lorebook System */}
+            <div className="bg-zinc-900/60 rounded-2xl border border-zinc-800 p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-brand-400" />
+                <div>
+                  <h3 className="text-xs font-bold text-zinc-100 uppercase tracking-wider">
+                    Attached World Books & Lorebooks
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">
+                    Entries from attached world books are dynamically scanned and injected into context when trigger keywords are mentioned.
+                  </p>
+                </div>
+              </div>
+
+              {lorebooks.length === 0 ? (
+                <div className="text-center py-6 bg-zinc-950/50 rounded-xl border border-zinc-800 text-zinc-500 text-xs">
+                  No World Books created yet. Visit <button onClick={() => navigate('/lorebooks')} className="text-brand-400 hover:underline">World Books & Lore</button> to create one.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 pb-1">
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 font-semibold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(character.context_config?.lorebook_ids || []).length === 0}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setCharacter(prev => ({
+                              ...prev,
+                              context_config: { ...prev.context_config!, lorebook_ids: [] }
+                            }));
+                          } else {
+                            setCharacter(prev => ({
+                              ...prev,
+                              context_config: { ...prev.context_config!, lorebook_ids: lorebooks.map(b => b.id) }
+                            }));
+                          }
+                        }}
+                        className="w-4 h-4 accent-brand-500 rounded cursor-pointer"
+                      />
+                      <span>Auto-Scan All Active World Books (Recommended)</span>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {lorebooks.map(book => {
+                      const isSelected = (character.context_config?.lorebook_ids || []).length === 0 ||
+                                        (character.context_config?.lorebook_ids || []).includes(book.id);
+                      return (
+                        <div
+                          key={book.id}
+                          onClick={() => {
+                            const currentIds = character.context_config?.lorebook_ids || [];
+                            let newIds: string[];
+                            if (currentIds.length === 0) {
+                              newIds = lorebooks.map(b => b.id).filter(id => id !== book.id);
+                            } else if (currentIds.includes(book.id)) {
+                              newIds = currentIds.filter(id => id !== book.id);
+                            } else {
+                              newIds = [...currentIds, book.id];
+                            }
+                            setCharacter(prev => ({
+                              ...prev,
+                              context_config: { ...prev.context_config!, lorebook_ids: newIds }
+                            }));
+                          }}
+                          className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-start gap-3 ${
+                            isSelected
+                              ? 'bg-brand-950/20 border-brand-500/40 text-zinc-100'
+                              : 'bg-zinc-950/40 border-zinc-800 text-zinc-400 opacity-60'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}}
+                            className="w-4 h-4 accent-brand-500 rounded mt-0.5 shrink-0"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-xs text-zinc-200 truncate">{book.name}</span>
+                              <span className="text-[10px] font-mono bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded text-zinc-400">
+                                {book.entries?.length || (book as any).entries_count || 0} entries
+                              </span>
+                            </div>
+                            {book.description && (
+                              <p className="text-[11px] text-zinc-400 mt-1 line-clamp-2">{book.description}</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Weak Model Rule Reinforcement */}
+            <div className="p-4 bg-zinc-900/60 rounded-2xl border border-zinc-800 flex items-center justify-between gap-4">
+              <div>
+                <span className="text-xs font-semibold text-zinc-200 block uppercase tracking-wider">
+                  Weak Model Persona Reinforcement (Recency Anchor)
+                </span>
+                <p className="text-[11px] text-zinc-400 mt-0.5">
+                  Injects an anti-break roleplay reminder at the end of each turn so 1B–8B local Ollama models (e.g. Llama-3.2 1B/3B, Qwen 2.5, Mistral) never lose character persona or write user dialogue.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={character.context_config?.reinforce_system_prompt !== false}
+                onChange={e => setCharacter(prev => ({
+                  ...prev,
+                  context_config: {
+                    ...prev.context_config!,
+                    reinforce_system_prompt: e.target.checked
+                  }
+                }))}
+                className="w-5 h-5 accent-brand-500 cursor-pointer shrink-0"
+              />
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="p-4 bg-zinc-900/60 rounded-2xl border border-zinc-800">
                 <div className="flex justify-between text-xs text-zinc-200 mb-2 font-semibold uppercase tracking-wider">

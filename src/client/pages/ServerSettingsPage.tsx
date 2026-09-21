@@ -28,6 +28,8 @@ export const ServerSettingsPage: React.FC = () => {
     default_context_tokens: 4096,
     max_context_tokens_hard_cap: 8192,
     enable_auto_summarize: true,
+    public_asset_url: '',
+    weak_model_reinforce: true,
     log_retention_days: 7,
     app_name: 'RP-Man',
     app_theme: 'matte-dark'
@@ -207,6 +209,41 @@ export const ServerSettingsPage: React.FC = () => {
               <option value="15m">15m (Fast multi-turn roleplay)</option>
               <option value="-1">-1 (Stay loaded in VRAM forever)</option>
             </select>
+          </div>
+
+          {/* Public Asset & Webhook Host URL */}
+          <div className="md:col-span-2">
+            <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5">
+              Public Asset Base URL / External Server URL
+            </label>
+            <input
+              type="text"
+              value={settings.public_asset_url || ''}
+              onChange={e => setSettings(prev => ({ ...prev, public_asset_url: e.target.value }))}
+              placeholder="e.g. http://192.168.1.50:3000 or https://rp.mydomain.com"
+              className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs font-mono text-zinc-100 focus:outline-none focus:border-brand-500"
+            />
+            <p className="text-[11px] text-zinc-500 mt-1">
+              Used to deliver uploaded character images, expressions, and avatars to Discord Webhooks and external clients. Set this to your ZimaOS local IP or public domain.
+            </p>
+          </div>
+
+          {/* Weak Model Rule Reinforcement Toggle */}
+          <div className="md:col-span-2 p-4 bg-zinc-900/60 rounded-xl border border-zinc-800 flex items-center justify-between gap-4">
+            <div>
+              <span className="text-xs font-semibold text-zinc-200 block uppercase tracking-wider">
+                Weak & Small Model Rule Reinforcement (Recency Anchor)
+              </span>
+              <p className="text-[11px] text-zinc-400 mt-0.5">
+                Automatically reinforces roleplay instructions at the end of conversation turns to prevent 1B–8B models (Llama 3.2 1B/3B, Qwen 2.5, Mistral) from losing character personality or speaking for the user.
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={settings.weak_model_reinforce !== false}
+              onChange={e => setSettings(prev => ({ ...prev, weak_model_reinforce: e.target.checked }))}
+              className="w-5 h-5 accent-brand-500 cursor-pointer shrink-0"
+            />
           </div>
         </div>
       </div>

@@ -49,6 +49,14 @@ app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.use(cookieParser());
 
+// Static file serving for user uploads & assets (Avatars, Lore images, Webhooks)
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir, { maxAge: '7d' }));
+app.use('/api/system/uploads', express.static(uploadsDir, { maxAge: '7d' }));
+
 // API Routes
 app.use('/api/auth', authRouter);
 app.use('/api/users', usersRouter);
