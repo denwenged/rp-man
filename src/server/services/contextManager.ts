@@ -531,7 +531,8 @@ export class ContextManager {
     }
 
     // Recency Anchor for weak models (enforces character roleplay at the very end of context)
-    const recencyAnchor = `[System Directive: Respond strictly as ${charName} speaking to "${resolvedUserName}". Stay authentic to your character. Use asterisks for actions (*action*) and quotes for dialogue ("dialogue"). Do NOT write dialogue or actions for "${resolvedUserName}".]`;
+    const personaHint = character.personality ? ` (${character.personality.slice(0, 120)})` : (character.tagline ? ` (${character.tagline})` : '');
+    const recencyAnchor = `[System Directive: Respond strictly as ${charName}${personaHint} speaking to "${resolvedUserName}". Stay authentic to your character and tone. Use asterisks for actions (*action*) and quotes for dialogue ("dialogue"). Do NOT write dialogue or actions for "${resolvedUserName}".]`;
 
     const totalEstimatedTokens = systemPromptTokens + currentHistoryTokens;
 

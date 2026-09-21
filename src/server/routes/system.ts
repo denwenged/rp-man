@@ -104,6 +104,14 @@ systemRouter.post('/upload', authMiddleware, upload.single('image'), (req: Authe
     }
   } catch (e) {}
 
+  if (!publicAssetUrl) {
+    const reqHost = req.headers['x-forwarded-host'] || req.headers.host;
+    const reqProto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    if (reqHost) {
+      publicAssetUrl = `${reqProto}://${reqHost}`.replace(/\/+$/, '');
+    }
+  }
+
   const relativePath = `/uploads/${req.file.filename}`;
   const fileUrl = publicAssetUrl ? `${publicAssetUrl}${relativePath}` : relativePath;
 
